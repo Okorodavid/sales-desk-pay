@@ -8,7 +8,7 @@
 <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@33.3.2/dist/ag-grid-community.min.js"></script>
 <style>
   .grid-wrap { flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
-  #grid { height: 440px; width: 100%; }
+  #grid { height: 470px; width: 100%; }
   #events { height: 230px; width: 100%; }
   .pill { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 999px; font-size: 13px; font-weight: 600; background: var(--col); color: var(--ink-2); }
   .pill.approval { background: var(--orange-soft); color: var(--orange); }
@@ -81,7 +81,7 @@ const paypalCell = (p) => {
 };
 const actionCell = (p) => {
   const d = p.data;
-  if (d.stage === "approval") return `<button class="grid-btn" data-act="approve" data-order="${d.order_id}">Approve PayPal link</button>`;
+  if (d.stage === "approval") return `<button class="grid-btn" data-act="approve" data-order="${d.order_id}">Approve link</button>`;
   if (d.stage === "paid") return `<button class="grid-btn dark" data-act="delivered" data-order="${d.order_id}">Mark delivered</button>`;
   return "";
 };
@@ -89,17 +89,17 @@ const orderGrid = agGrid.createGrid($("grid"), {
   theme,
   getRowId: (p) => String(p.data.order_id),
   enableCellChangeFlash: true,
+  autoSizeStrategy: { type: "fitGridWidth" },
   rowSelection: { mode: "singleRow", checkboxes: false, enableClickSelection: true },
   columnDefs: [
-    { field: "code", headerName: "Order", width: 100, sort: "desc" },
-    { field: "name", headerName: "Customer", width: 140 },
-    { field: "channel", headerName: "Channel", width: 110 },
-    { field: "what", headerName: "What", flex: 2, minWidth: 180 },
+    { field: "order_id", hide: true, sort: "desc" },
+    { field: "code", headerName: "Order", width: 90, sortable: false },
+    { field: "name", headerName: "Customer", width: 130 },
+    { field: "what", headerName: "What", flex: 2, minWidth: 150 },
     { field: "amount", headerName: "Total", width: 90, comparator: (a, b, na, nb) => (na.data.total || 0) - (nb.data.total || 0) },
     { field: "stage_label", headerName: "Stage", width: 150, cellRenderer: stageCell, filter: true },
-    { field: "paypal", headerName: "PayPal says", flex: 2, minWidth: 220, cellRenderer: paypalCell },
-    { field: "next", headerName: "Next step", flex: 2, minWidth: 190 },
-    { headerName: "", width: 190, cellRenderer: actionCell, sortable: false, suppressCellFlash: true },
+    { field: "paypal", headerName: "PayPal says", flex: 3, minWidth: 200, cellRenderer: paypalCell, tooltipField: "paypal" },
+    { headerName: "", width: 150, minWidth: 150, cellRenderer: actionCell, sortable: false, suppressCellFlash: true },
   ],
   defaultColDef: { sortable: true, resizable: true, suppressMovable: true },
   onRowClicked: (e) => { selected = e.data.customer_id; draft = ""; history.replaceState(null, "", withKey("/board?c=" + selected)); loadChat(); },

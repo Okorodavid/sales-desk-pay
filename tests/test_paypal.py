@@ -252,7 +252,7 @@ def test_create_order_request_and_link():
     unit = seen["body"]["purchase_units"][0]
     assert seen["body"]["intent"] == "CAPTURE" and unit["amount"] == {"currency_code": "GBP", "value": "76.00"}
     assert unit["custom_id"] == "ZC-1" and seen["headers"]["Authorization"] == "Bearer TOK"
-    assert seen["headers"]["PayPal-Request-Id"] == "sdp-ZC-1"  # pressing Approve twice cannot make two orders
+    assert seen["headers"]["PayPal-Request-Id"].startswith("sdp-ZC-1-")  # the same body gives the same id: no double orders
     assert seen["auth"].startswith("Basic ")
 
 

@@ -15,6 +15,7 @@ The capture call's own answer is never used to mark an order Paid."""
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
@@ -144,7 +145,7 @@ class PayPalClient:
                 "user_action": "PAY_NOW", "shipping_preference": "NO_SHIPPING"}}},
         }
         r = await self._call("POST", "/v2/checkout/orders", json=body,
-                             headers={"PayPal-Request-Id": f"sdp-{reference}", "Prefer": "return=representation"})
+                             headers={"PayPal-Request-Id": self._request_id(reference, body), "Prefer": "return=representation"})
         if r.status_code not in (200, 201):
             raise PayPalError(f"PayPal wouldn't create the order ({r.status_code}): {r.text[:200]}")
         data = r.json()
@@ -153,6 +154,13 @@ class PayPalClient:
         if not data.get("id") or not link:
             raise PayPalError("PayPal's answer had no order id or buyer link")
         return str(data["id"]), link
+
+    @staticmethod
+    def _request_id(reference: str, body: dict) -> str:
+        """The same order body gives the same id (a retry or double click returns the same PayPal order); a changed
+        body gives a new id, so a reset demo that reuses an order code doesn't hit PayPal's idempotency error."""
+        digest = hashlib.sha1(json.dumps(body, sort_keys=True).encode()).hexdigest()[:10]
+        return f"sdp-{reference}-{digest}"
 
     async def capture(self, pp_order_id: str) -> str:
         """Collect the money after the buyer approved. Returns PayPal's status text, for the log only: this
