@@ -36,7 +36,7 @@ PayPal can only send a payment message to a public https address.
 
 - **AG Grid:** nothing to sign up for. The free Community version is used.
 - **Render:** only if you want a hosted demo link. Tell Claude when you have an account; the setup file is ready.
-- **Devpost sponsor rules:** Devpost blocks Claude from reading its pages (error 403). Open `paypalaihackathon.devpost.com/rules` yourself and paste the AG Grid and Render sections to Claude, so nothing is claimed that the rules don't allow.
+- **Devpost sponsor rules:** already read from your Chrome. AG Grid's prize goes to submissions that use any AG Grid tools, with no extra requirements, and a project can win one main prize or honourable mention plus one sponsor prize. Nothing to paste.
 
 ## 4. At the end
 

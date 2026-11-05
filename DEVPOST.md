@@ -33,7 +33,7 @@ Python, aiohttp, SQLite, PayPal REST APIs (Orders v2, Webhooks verify), AG Grid 
 Repo: (the owner adds the GitHub link after pushing). Run steps and the sandbox buyer login are in the README. Hosted demo: (a Render link, if the owner sets one up).
 
 ## Sponsor prizes
-AG Grid: Community edition used for both grids. Do **not** tick any other sponsor prize until the owner has read that sponsor's rules on the Devpost page (Devpost blocked Claude from reading them).
+AG Grid: AG Grid Community is used for both grids (the order board and the PayPal events log). A project can win one main prize or honourable mention plus one sponsor prize; the other sponsors' tools (APIMatic, Bryntum, Channel3, Render) are not used, so don't tick them. Render is only a deploy option in `render.yaml`.
 
 ## Honourable mention to aim for
 Best Use of Agentic Commerce.
