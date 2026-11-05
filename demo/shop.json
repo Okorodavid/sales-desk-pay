@@ -1,19 +1,24 @@
 {
-  "name": "Nkem Fabrics",
-  "owner": "Nkem",
-  "city": "Enugu",
-  "about": "Ankara, lace, George and aso-oke, sold by the yard or by the set. Made-up demo shop.",
-  "hours": "Mon-Sat 9am-7pm. The robot replies at any hour.",
-  "pay_to": "Nkem Fabrics, Moniepoint, 0123456789 (demo)",
+  "name": "Zuri Cloth",
+  "owner": "Folake",
+  "city": "Peckham, London",
+  "currency": "GBP",
+  "order_prefix": "ZC",
+  "about": "African fabric for owambe, weddings and everyday sewing: Ankara, Swiss lace, George and aso-oke, sold by the yard or by the set. Made-up demo shop.",
+  "hours": "Mon-Sat 10am-6pm. The robot replies at any hour.",
   "bulk_over_yards": 20,
   "follow_up_hours": 20,
   "max_follow_ups": 2,
   "delivery": [
-    {"id": "ENUGU", "name": "Enugu city", "fee": 2500, "days": "same or next day",
-     "areas": ["independence layout", "gra", "new haven", "trans-ekulu", "trans ekulu", "abakpa", "emene", "achara layout", "uwani", "ogui", "asata", "coal camp", "thinkers corner", "enugu"]},
-    {"id": "NSUKKA", "name": "Nsukka", "fee": 4000, "days": "one day", "areas": ["nsukka", "unn"]},
-    {"id": "STATES", "name": "Other states (by courier)", "fee": 6500, "days": "two to three days",
-     "areas": ["lagos", "abuja", "port harcourt", "owerri", "onitsha", "awka", "aba", "asaba", "ibadan", "kano", "benin"]},
-    {"id": "PICKUP", "name": "Pickup at the shop", "fee": 0, "days": "any time in opening hours", "areas": ["pickup", "pick up", "collect"]}
+    {"id": "LONDON", "name": "Greater London", "fee": 4, "days": "next working day",
+     "areas": ["peckham", "brixton", "hackney", "croydon", "lewisham", "stratford", "dalston", "camberwell", "catford", "walthamstow", "tottenham", "woolwich", "london"]},
+    {"id": "UK", "name": "the rest of the UK", "fee": 6, "days": "two to three working days",
+     "areas": ["manchester", "birmingham", "leeds", "glasgow", "bristol", "liverpool", "leicester", "sheffield", "nottingham", "cardiff", "edinburgh", "uk"]},
+    {"id": "EUROPE", "name": "Europe", "fee": 12, "days": "four to six working days",
+     "areas": ["paris", "dublin", "amsterdam", "berlin", "madrid", "lisbon", "brussels", "europe"]},
+    {"id": "NORTHAM", "name": "USA and Canada", "fee": 18, "days": "five to eight working days",
+     "areas": ["new york", "houston", "atlanta", "toronto", "usa", "canada", "dallas", "chicago"]},
+    {"id": "COLLECT", "name": "Collection from the shop", "fee": 0, "days": "any time in opening hours",
+     "areas": ["collect", "collection", "pickup", "pick up"]}
   ]
 }

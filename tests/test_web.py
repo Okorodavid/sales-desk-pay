@@ -1,9 +1,9 @@
 import asyncio
 
 from aiohttp.test_utils import TestClient, TestServer
-from test_payments import eml
 
 from salesdesk.deliver import Dispatcher
+from salesdesk.harness import Stack
 from salesdesk.seed import seed
 from salesdesk.web import Web
 
@@ -18,54 +18,73 @@ def _client(desk, **settings):
     return TestClient(TestServer(Web(desk.settings, desk, Dispatcher(desk.store)).app()))
 
 
-def test_screens_and_owner_actions(make_desk):
+def test_screens_and_the_owner_approve_button(make_desk):
     async def go():
-        d = make_desk()
-        seed(d)
-        async with _client(d) as c:
+        async with Stack() as st:
+            seed(st.desk)
+            c = st.client
             for path in ("/", "/board", "/phone", "/app.css"):
                 assert (await c.get(path)).status == 200
             brief = await (await c.get("/api/brief")).json()
-            pay = next(n for n in brief["needs"] if n["kind"] == "payment")
-            assert (await c.post(f"/api/order/{pay['order_id']}/confirm", json={})).status == 200
-            assert d.store.get_order(pay["order_id"])["stage"] == "paid"
-            chat = await (await c.get(f"/api/chat/{pay['customer_id']}")).json()
-            assert chat["messages"][-1]["text"].startswith("Payment received")
-            r = await c.post(f"/api/customer/{pay['customer_id']}/reply", json={"text": "Thank you dear!"})
-            assert (await r.json())["sent"] and d.store.get_customer(pay["customer_id"])["owner_mode"] == 1
+            need = next(n for n in brief["needs"] if n["kind"] == "approval")
+            assert (await c.post(f"/api/order/{need['order_id']}/approve", json={})).status == 200
+            order = st.store.get_order(need["order_id"])
+            assert order["stage"] == "awaiting_payment" and order["pp_link"]
+            chat = await (await c.get(f"/api/chat/{need['customer_id']}")).json()
+            assert "secure PayPal link" in chat["messages"][-1]["text"] and chat["order"]["paypal"].startswith("Link sent")
+            board = await (await c.get("/api/board")).json()
+            row = next(r for r in board["rows"] if r["order_id"] == need["order_id"])
+            assert row["stage"] == "awaiting_payment" and row["stage_label"] == "Awaiting PayPal"
+            r = await c.post(f"/api/customer/{need['customer_id']}/reply", json={"text": "Thank you dear!"})
+            assert (await r.json())["sent"] and st.store.get_customer(need["customer_id"])["owner_mode"] == 1
     run(go())
 
 
-def test_demo_phone_and_test_alert(make_desk):
+def test_demo_phone_end_to_end_with_a_forged_receipt_first(make_desk):
     async def go():
-        d = make_desk()
-        async with _client(d) as c:
-            for t in ("6 yards of the blue ankara please", "GRA", "yes"):
+        async with Stack() as st:
+            c = st.client
+            for t in ("6 yards of the blue ankara please", "Peckham", "yes"):
                 r = await (await c.post("/api/demo/message", json={"channel": "instagram", "address": "x1", "name": "Ada", "text": t})).json()
-            assert "NF-1" in r["replies"][0]
-            assert (await c.post("/api/demo/bank-alert", json={"amount": "38,500", "narration": "NF-1", "verified": True})).status == 200
+            assert "approves each order first" in r["replies"][0]
+            brief = await (await c.get("/api/brief")).json()
+            oid = next(n for n in brief["needs"] if n["kind"] == "approval")["order_id"]
+            await c.post(f"/api/order/{oid}/approve", json={})
+            order = st.store.get_order(oid)
+            # a forged PayPal message is refused at the door
+            r = await (await c.post("/api/demo/forge", json={"order_id": oid, "kind": "wrong_key"})).json()
+            assert r["refused"] and r["status"] == 401 and r["stage"] == "awaiting_payment"
+            # then the real thing
+            await st.buyer_pays(order)
+            assert st.stage(order) == "paid"
             inbox = await (await c.get("/api/demo/inbox?channel=instagram&address=x1")).json()
-            assert inbox["replies"] and inbox["replies"][0].startswith("Payment received")
+            assert any(m.startswith("Payment received through PayPal") for m in inbox["replies"])
     run(go())
 
 
-def test_inbound_bank_alert_needs_the_token(make_desk):
+def test_forge_endpoint_needs_a_paypal_order(make_desk):
     async def go():
-        d = make_desk()
-        async with _client(d, inbound_token="t0k", alert_domains=("moniepoint.com",)) as c:
-            assert (await c.post("/inbound/bank-alert", data=eml())).status == 403
-            r = await c.post("/inbound/bank-alert?token=t0k", data=eml())
-            assert (await r.json()) == {"credit_alert": True, "verified": True}
-            assert d.store.alerts(("unmatched",))  # no order waiting in an empty shop
+        async with Stack() as st:
+            r = await st.client.post("/api/demo/forge", json={"order_id": 99, "kind": "unsigned"})
+            assert r.status == 400
+    run(go())
+
+
+def test_buyer_pages_only_work_for_orders_we_made(make_desk):
+    async def go():
+        async with Stack() as st:
+            assert (await st.client.get("/paypal/return?token=NOPE")).status == 404
+            assert (await st.client.get("/paypal/cancel")).status == 200
     run(go())
 
 
 def test_demo_key_locks_screens_and_demo_tools_can_be_off(make_desk):
     async def go():
         d = make_desk()
-        async with _client(d, demo_key="nkem-7") as c:
+        async with _client(d, demo_key="zuri-7") as c:
             assert (await c.get("/")).status == 404 and (await c.get("/api/brief")).status == 404
-            assert (await c.get("/?k=nkem-7")).status == 200 and (await c.get("/health")).status == 200
+            assert (await c.get("/?k=zuri-7")).status == 200 and (await c.get("/health")).status == 200
+            assert (await c.post("/paypal/webhook", data=b"{}")).status == 503  # no PayPal client in this desk: refuses
         async with _client(make_desk(), demo_tools=False) as c:
             assert (await c.get("/phone")).status == 404
             assert (await c.post("/api/demo/reset", json={})).status in (404, 405)

@@ -14,7 +14,7 @@ from salesdesk.desk import Desk  # noqa: E402
 from salesdesk.shop import load_shop  # noqa: E402
 from salesdesk.store import Store  # noqa: E402
 
-LAGOS = ZoneInfo("Africa/Lagos")
+LONDON = ZoneInfo("Europe/London")
 
 
 class Clock:
@@ -43,8 +43,8 @@ class ScriptedBrain:
 
 @pytest.fixture
 def clock():
-    # Wednesday 4 November 2026, 9:10pm Lagos: after closing.
-    return Clock(datetime(2026, 11, 4, 21, 10, tzinfo=LAGOS))
+    # Wednesday 4 November 2026, 9:10pm London: after closing.
+    return Clock(datetime(2026, 11, 4, 21, 10, tzinfo=LONDON))
 
 
 @pytest.fixture

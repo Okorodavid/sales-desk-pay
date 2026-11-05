@@ -1,9 +1,10 @@
-"""The desk: every customer message, owner action and bank alert goes through here.
+"""The desk: every customer message, owner action and PayPal event goes through here.
 
 It is channel-free. It returns the messages to send (to customers and to the owner) and the channel
 code delivers them. The model proposes; the desk decides:
 - prices and totals come from the price list, never from the model;
-- money is confirmed only by the owner or by a verified bank alert;
+- money is confirmed only by a signature-verified PayPal event (never a screenshot, never the customer's word);
+- the PayPal link is made only after the owner approves;
 - discounts, bulk orders and complaints always go to the owner;
 - while the owner has taken over a chat, the robot stays quiet in it."""
 
@@ -11,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import re
+from decimal import Decimal
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Callable
@@ -18,8 +20,8 @@ from zoneinfo import ZoneInfo
 
 from .brain import MEMORY_FIELDS, BrainError, system_prompt
 from .config import Settings
-from .payments import Alert, match_order
-from .shop import Shop, naira
+from .paypal import PayPalError, VerifiedEvent
+from .shop import Shop
 from .store import Store, iso, parse
 
 log = logging.getLogger("salesdesk.desk")
@@ -27,7 +29,7 @@ STOP = re.compile(r"^\s*(stop|unsubscribe|stop messaging me)\s*\.?\s*$", re.I)
 START = re.compile(r"^\s*(start|unstop)\s*$", re.I)
 PRICE_TALK = re.compile(r"\b(discount|last price|final price|best price|reduce (it|the price)|too (much|expensive)|bulk|"
                         r"wholesale|negotiat|can you do \d)", re.I)
-AMOUNT = re.compile(r"(?:₦|NGN|\bN)\s?(\d[\d,]{2,})|\b(\d[\d,]{3,})\s*naira", re.I)
+AMOUNT = re.compile(r"(?:£|\$|€|GBP|USD|EUR)\s?(\d[\d,]*(?:\.\d{1,2})?)|\b(\d[\d,]*(?:\.\d{1,2})?)\s*(?:pounds|quid|gbp)\b", re.I)
 WINDOW = timedelta(hours=24)  # WhatsApp and Instagram allow free replies 24h after the customer's last message
 
 
@@ -60,8 +62,9 @@ class Outcome:
 
 class Desk:
     def __init__(self, settings: Settings, store: Store, shop: Shop, brain, clock: Callable[[], datetime] | None = None,
-                 senses=None):
+                 senses=None, paypal=None):
         self.settings, self.store, self.shop, self.brain = settings, store, shop, brain
+        self.paypal = paypal  # a PayPalClient (real sandbox or the mock); None = no payment links can be made
         self.senses = senses  # voice notes and receipt photos (Meta models); None = treat them as plain placeholders
         self.tz = ZoneInfo(settings.timezone)
         self.clock = clock or (lambda: datetime.now(self.tz))
@@ -162,10 +165,7 @@ class Desk:
         if action == "says_paid":
             return out.extend(self._says_paid(cust, order, text))
         if action == "accept_quote" and order["stage"] == "quoted":
-            self.store.update_order(order["id"], now, stage="awaiting_payment")
-            self._say(out, cust, f"Great, I'm holding it for you. Please pay {naira(order['total'])} to {self.shop.pay_to}. "
-                                 f"Put {self.code(order['id'])} in the transfer description, then send the receipt here.", "payment")
-            return out
+            return out.extend(self._ask_for_approval(cust, order))
 
         items = turn["items"] if action == "quote" else []
         if not items and self.store.items(order) and not order["total"]:
@@ -217,15 +217,13 @@ class Desk:
         if receipt.amount == order["total"]:
             checks.append(f"the amount matches {code}")
         else:
-            checks.append(f"careful: it shows {naira(receipt.amount) if receipt.amount else 'no readable amount'}, "
-                          f"but {code} is {naira(order['total'])}")
-        if code.lower() in receipt.narration.lower().replace(" ", ""):
-            checks.append("the order code is in the description")
+            checks.append(f"careful: it shows {self.shop.money(receipt.amount) if receipt.amount else 'no readable amount'}, "
+                          f"but {code} is {self.shop.money(order['total'])}")
         if receipt.doubts:
             checks.append(f"Muse noticed: {receipt.doubts}")
         said = "; ".join(checks)
         return (f"{who} sent a receipt: {receipt.line()}. {said[0].upper()}{said[1:]}. "
-                "A screenshot isn't proof, so confirm when the money shows in your bank.")
+                "A screenshot is not proof, so the order stays unpaid until PayPal confirms it.")
 
     def _remember(self, cust, updates: dict) -> None:
         mem = self.store.memory(cust)
@@ -247,7 +245,8 @@ class Desk:
     @staticmethod
     def _amounts_ok(text: str, allowed: set[int]) -> bool:
         for m in AMOUNT.finditer(text):
-            if int((m.group(1) or m.group(2)).replace(",", "")) not in allowed:
+            value = Decimal((m.group(1) or m.group(2)).replace(",", ""))
+            if value != value.to_integral_value() or int(value) not in allowed:
                 return False
         return True
 
@@ -267,7 +266,7 @@ class Desk:
             if p.unit == "yard":
                 yards += it["qty"]
             chosen.append({"sku": p.sku, "name": p.name, "unit": p.unit, "qty": it["qty"], "price": p.price})
-            lines.append(f"{p.amount_text(it['qty'])}: {naira(p.price * it['qty'])}")
+            lines.append(f"{p.amount_text(it['qty'])}: {self.shop.money(p.price * it['qty'])}")
         if yards > self.shop.bulk_over_yards:
             self._handoff(out, cust, f"bulk order, {yards} yards: needs your price", text,
                           f"For {yards} yards {self.shop.owner} gives the price herself. I've passed it to her and she'll reply you shortly.")
@@ -284,26 +283,37 @@ class Desk:
         total = subtotal + zone.fee
         self.store.update_order(order["id"], now, items=chosen, zone=zone.id, subtotal=subtotal,
                                 delivery_fee=zone.fee, total=total, stage="quoted", follow_ups=0)
-        where = f"{zone.name}: free" if not zone.fee else f"Delivery to {zone.name}: {naira(zone.fee)}"
+        where = f"{zone.name}: free" if not zone.fee else f"Delivery to {zone.name}: {self.shop.money(zone.fee)}"
         lead = reply if reply and not AMOUNT.search(reply) else ""
-        quote = f"{'; '.join(lines)}. {where}. Total: {naira(total)}. Shall I hold it for you?"
+        quote = f"{'; '.join(lines)}. {where}. Total: {self.shop.money(total)}. Shall I hold it for you?"
         self._say(out, cust, f"{lead} {quote}".strip())
         return out
 
-    def _says_paid(self, cust, order, text: str) -> Outcome:
+    def _ask_for_approval(self, cust, order) -> Outcome:
+        """The customer said yes. The robot does not make the PayPal link itself: the owner approves first."""
         out = Outcome()
-        now = self.now()
-        if not order["total"] or order["stage"] not in ("quoted", "awaiting_payment"):
+        self.store.update_order(order["id"], self.now(), stage="approval", pp_note="Waiting for your OK")
+        self._say(out, cust, f"Lovely, I'm holding it for you. {self.shop.owner} approves each order first, then I'll send your "
+                             f"secure PayPal link for {self.shop.money(order['total'])} right here. It only takes a moment.")
+        out.notes.append(OwnerNote(f"{cust['name'] or cust['address']} said yes to {self.code(order['id'])} "
+                                   f"({self.shop.money(order['total'])}). Approve it and the robot sends the PayPal link."))
+        return out
+
+    def _says_paid(self, cust, order, text: str) -> Outcome:
+        """'I've paid.' Words are not proof. This records the claim and points them at the link; only a signed
+        PayPal event can mark the order Paid."""
+        out = Outcome()
+        if not order["total"] or order["stage"] not in ("quoted", "approval", "awaiting_payment"):
             self._handoff(out, cust, "says they paid, but no order is waiting for money", text)
             return out
-        self.store.update_order(order["id"], now, stage="awaiting_payment", says_paid=1, receipt=text[:300])
-        for a in self.store.alerts(("unmatched", "to_check")):  # the bank alert may have arrived first
-            if a["amount"] == order["total"] and a["verified"]:
-                self.store.update_alert(a["id"], order_id=order["id"], status="confirmed", note="matched when the customer said they paid")
-                return out.extend(self.confirm_payment(order["id"], by="bank_alert"))
-        self._say(out, cust, f"Thank you! {self.shop.owner} is checking the payment now. You'll get a message the moment it's confirmed.")
-        out.notes.append(OwnerNote(f"{cust['name'] or cust['address']} says they paid {naira(order['total'])} for "
-                                   f"{self.code(order['id'])}. Check your bank, then press \"Money is in\"."))
+        self.store.update_order(order["id"], self.now(), says_paid=1, receipt=text[:300])
+        if order["stage"] == "awaiting_payment" and order["pp_link"]:
+            self._say(out, cust, "Thank you! I can only confirm an order once PayPal itself tells me the money arrived, "
+                                 "and I haven't had that message yet. If you haven't paid, this is your link: "
+                                 f"{order['pp_link']} . I'll message you here the moment PayPal confirms.")
+        else:
+            self._say(out, cust, f"Thank you! Your PayPal link isn't ready yet: {self.shop.owner} approves each order first. "
+                                 "I'll send it here, and I confirm the order only when PayPal says the money arrived.")
         return out
 
     def context(self, cust, order, latest: str) -> str:
@@ -312,7 +322,7 @@ class Desk:
         items = self.store.items(order)
         if order["total"]:
             what = "; ".join(f"{i['qty']} {i['unit']} {i['name']}" for i in items)
-            order_text = f"{self.code(order['id'])}, stage {order['stage']}: {what}, total {naira(order['total'])}"
+            order_text = f"{self.code(order['id'])}, stage {order['stage']}: {what}, total {self.shop.money(order['total'])}"
         elif items:
             order_text = "wants " + "; ".join(f"{i['qty']} {i['unit']} {i['name']}" for i in items) + ", delivery area unknown"
         else:
@@ -327,13 +337,83 @@ class Desk:
                 f"<history>\n{lines}\n</history>\n<latest_message>\n{latest}\n</latest_message>")
 
     # The owner's actions -----------------------------------------------------------------------
-    def confirm_payment(self, order_id: int, by: str = "owner") -> Outcome:
+    async def approve_payment(self, order_id: int) -> Outcome:
+        """The owner approves the order: make the PayPal link and send it to the customer."""
         out = Outcome()
         order = self.store.get_order(order_id)
-        if not order or order["stage"] not in ("quoted", "awaiting_payment"):
+        if not order or order["stage"] != "approval" or self.paypal is None:
             return out
+        cust = self.store.get_customer(order["customer_id"])
+        code = self.code(order_id)
+        items = self.store.items(order)
+        what = ", ".join(f"{i['qty']} {i['unit']} {i['name']}" for i in items)[:90]
+        site = self.settings.site_url
+        try:
+            pp_id, link = await self.paypal.create_order(order["total"], self.shop.currency, code,
+                                                         f"{self.shop.name} {code}: {what}",
+                                                         f"{site}/paypal/return", f"{site}/paypal/cancel")
+        except PayPalError as exc:
+            log.warning("create_order: %s", exc)
+            self.store.update_order(order_id, self.now(), pp_note="PayPal link failed: try Approve again")
+            out.notes.append(OwnerNote(f"PayPal didn't make the link for {code}: {exc}. Press Approve to try again."))
+            return out
+        self.store.update_order(order_id, self.now(), stage="awaiting_payment", pp_order_id=pp_id, pp_link=link,
+                                pp_note="Link sent, waiting for the buyer")
+        self._say(out, cust, f"Here is your secure PayPal link for {self.shop.money(order['total'])} ({code}): {link}\n"
+                             "You can pay with PayPal or a card. I'll message you the moment PayPal confirms.", "payment")
+        return out
+
+    def buyer_returned(self, pp_order_id: str) -> None:
+        """The buyer's browser came back from PayPal. Only a note for the board: it never marks anything Paid."""
+        order = self.store.order_by_paypal_id(pp_order_id)
+        if order and order["stage"] == "awaiting_payment":
+            self.store.update_order(order["id"], self.now(), pp_note="Buyer approved on PayPal, waiting for PayPal's confirmation")
+
+    def paypal_event(self, ev: VerifiedEvent) -> Outcome:
+        """The only way an order becomes Paid. `ev` is a VerifiedEvent, which exists only if PayPal itself said the
+        message is genuine. Even then the money must match: right order, right amount, right currency, completed."""
+        if not isinstance(ev, VerifiedEvent):
+            raise TypeError("paypal_event needs a VerifiedEvent")
+        out = Outcome()
         now = self.now()
-        self.store.update_order(order_id, now, stage="paid", says_paid=0, paid_by=by, paid_at=iso(now))
+        if self.store.seen_event(ev.event_id):
+            return out  # PayPal retries deliveries; a repeat changes nothing
+        order = self.store.order_by_paypal_id(ev.pp_order_id)
+        oid = order["id"] if order else None
+
+        def log_(outcome: str, note: str) -> Outcome:
+            self.store.add_event(now, ev.event_id, ev.event_type, oid, outcome, note)
+            return out
+
+        def flag(note: str, order_note: str) -> Outcome:
+            self.store.add_event(now, ev.event_id, ev.event_type, oid, "rejected", note)
+            if order and order_note:
+                self.store.update_order(order["id"], now, pp_note=order_note)
+            out.notes.append(OwnerNote(f"PayPal event not used ({ev.event_type}): {note}."))
+            return out
+
+        if ev.event_type != "PAYMENT.CAPTURE.COMPLETED":
+            return log_("ignored", f"{ev.event_type} is not a completed payment")
+        if not order:
+            return flag("no order here has that PayPal order id", "")
+        code = self.code(order["id"])
+        if ev.status != "COMPLETED":
+            return flag(f"{code}: PayPal capture status is {ev.status or 'missing'}, not COMPLETED",
+                        f"PayPal says {ev.status or '?'}: not paid")
+        if ev.currency != self.shop.currency or ev.value is None or ev.value != Decimal(order["total"]):
+            got = f"{ev.currency} {ev.value}"
+            return flag(f"{code} is {self.shop.currency} {order['total']} but PayPal reports {got}; check it in PayPal",
+                        f"PayPal reports {got}: does not match the order")
+        if ev.custom_id and ev.custom_id != code:
+            return flag(f"{code}: PayPal's reference says {ev.custom_id}", "PayPal reference does not match")
+        if order["stage"] in ("paid", "delivered"):
+            return log_("duplicate", f"{code} was already paid")
+        if order["stage"] != "awaiting_payment":
+            return flag(f"{code} was {order['stage']} when the money arrived; refund it in PayPal if it isn't wanted",
+                        "Money arrived for an order that wasn't waiting for it")
+        self.store.update_order(order["id"], now, stage="paid", says_paid=0, paid_by="paypal", paid_at=iso(now),
+                                pp_capture_id=ev.capture_id, pp_note=f"Paid: PayPal capture {ev.capture_id}")
+        self.store.add_event(now, ev.event_id, ev.event_type, order["id"], "paid", f"capture {ev.capture_id}")
         for i in self.store.items(order):  # stock goes down once money is in
             p = self.shop.products.get(i["sku"])
             if p:
@@ -341,22 +421,11 @@ class Desk:
         cust = self.store.get_customer(order["customer_id"])
         first = self.first_name(cust)
         zone = self.shop.zones.get(order["zone"])
-        when = f" It goes out {zone.days}." if zone and zone.id != "PICKUP" else " It's ready for pickup."
-        self._say(out, cust, f"Payment received, thank you{' ' + first if first else ''}! Your order {self.code(order_id)} is confirmed.{when}", "payment")
-        if by == "bank_alert":
-            out.notes.append(OwnerNote(f"Bank alert matched: {naira(order['total'])} for {self.code(order_id)} "
-                                       f"({cust['name'] or cust['address']}). Confirmed, and they were told."))
-        return out
-
-    def payment_not_seen(self, order_id: int) -> Outcome:
-        out = Outcome()
-        order = self.store.get_order(order_id)
-        if not order or order["stage"] != "awaiting_payment":
-            return out
-        self.store.update_order(order_id, self.now(), says_paid=0)
-        cust = self.store.get_customer(order["customer_id"])
-        self._say(out, cust, "Thanks for waiting. We can't see the transfer yet. Transfers sometimes take a few minutes, "
-                             "so we'll confirm as soon as it lands. Could you check it went to the right account?")
+        when = f" It goes out {zone.days}." if zone and zone.id != "COLLECT" else " It's ready for collection."
+        self._say(out, cust, f"Payment received through PayPal, thank you{' ' + first if first else ''}! "
+                             f"Your order {code} is confirmed.{when}", "payment")
+        out.notes.append(OwnerNote(f"PayPal confirmed {self.shop.money(order['total'])} for {code} "
+                                   f"({cust['name'] or cust['address']}). The customer was told."))
         return out
 
     def mark_delivered(self, order_id: int) -> Outcome:
@@ -393,45 +462,6 @@ class Desk:
     def skip_follow_up(self, order_id: int, skip: bool = True) -> None:
         self.store.update_order(order_id, self.now(), skip_day=self.now().date().isoformat() if skip else "")
 
-    # Bank alerts -------------------------------------------------------------------------------
-    def bank_alert(self, alert: Alert) -> Outcome:
-        out = Outcome()
-        if self.store.seen_alert(alert.msg_id):
-            return out
-        waiting = []
-        for o in self.store.waiting_for_money():
-            c = self.store.get_customer(o["customer_id"])
-            waiting.append({"id": o["id"], "total": o["total"], "name": c["name"] or "", "says_paid": o["says_paid"]})
-        matches, how = match_order(alert, waiting, self.shop.order_prefix)
-        fields = dict(msg_id=alert.msg_id, amount=alert.amount, sender=alert.sender, narration=alert.narration,
-                      bank=alert.bank, verified=int(alert.verified))
-        who = alert.sender or "someone"
-        if not matches:
-            self.store.add_alert(self.now(), status="unmatched", note=how, **fields)
-            out.notes.append(OwnerNote(f"Money in: {naira(alert.amount)} from {who}, but no order is waiting for that amount."
-                                       + ("" if alert.verified else f" Careful: {alert.why}.")))
-            return out
-        sure = len(matches) == 1 and (how != "amount only" or matches[0]["says_paid"])
-        if alert.verified and sure and self.settings.auto_confirm:
-            self.store.add_alert(self.now(), status="confirmed", order_id=matches[0]["id"], note=f"{how}; {alert.why}", **fields)
-            return out.extend(self.confirm_payment(matches[0]["id"], by="bank_alert"))
-        note = alert.why if not alert.verified else ("more than one order fits" if len(matches) > 1 else f"matched by {how}")
-        self.store.add_alert(self.now(), status="to_check", order_id=matches[0]["id"], note=note, **fields)
-        out.notes.append(OwnerNote(f"Check this alert: {naira(alert.amount)} from {who} looks like {self.code(matches[0]['id'])} "
-                                   f"({matches[0]['name'] or 'customer'}). Not confirmed by itself because {note}."))
-        return out
-
-    def alert_confirm(self, alert_id: int, order_id: int | None = None) -> Outcome:
-        a = self.store.get_alert(alert_id)
-        if not a:
-            return Outcome()
-        oid = order_id or a["order_id"]
-        self.store.update_alert(alert_id, status="owner_confirmed", order_id=oid)
-        return self.confirm_payment(oid, by="owner") if oid else Outcome()
-
-    def alert_dismiss(self, alert_id: int) -> None:
-        self.store.update_alert(alert_id, status="dismissed")
-
     # The clock: follow-ups and the morning summary ---------------------------------------------
     def follow_up_due(self, order) -> datetime | None:
         if order["stage"] not in ("quoted", "awaiting_payment") or order["says_paid"]:
@@ -460,7 +490,9 @@ class Desk:
             if order["stage"] == "quoted":
                 text = f"{hi}, still interested in the {what}? I can hold it for you today."
             else:
-                text = f"{hi}, just checking in. Shall I keep holding your {what}? Send the receipt here once you pay."
+                link = order["pp_link"]
+                text = (f"{hi}, just checking in. Shall I keep holding your {what}? Your PayPal link: {link}" if link
+                        else f"{hi}, just checking in. Shall I keep holding your {what}?")
             self.store.update_order(order["id"], now, follow_ups=order["follow_ups"] + 1)
             self._say(out, cust, text, "follow_up")
         if now.hour >= self.settings.summary_hour and self._summary_day != today:

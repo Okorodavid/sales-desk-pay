@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime, time, timedelta
 
-from .shop import naira
 from .store import parse
 
 CHANNEL_NAMES = {"whatsapp": "WhatsApp", "instagram": "Instagram", "tiktok": "TikTok", "email": "Email",
                  "telegram": "Telegram", "web": "Web chat"}
-COLUMNS = [("asking", "Asking"), ("quoted", "Price sent"), ("awaiting_payment", "Waiting for money"),
-           ("paid", "Paid, to send"), ("delivered", "Delivered")]
+STAGE_LABELS = {"asking": "Asking", "quoted": "Price sent", "approval": "Needs your OK", "awaiting_payment": "Awaiting PayPal",
+                "paid": "Paid", "delivered": "Delivered"}
 
 
 def _since_yesterday(desk) -> datetime:
@@ -48,10 +47,10 @@ def next_step(desk, order, cust) -> tuple[str, bool]:
     if any(h["customer_id"] == cust["id"] for h in desk.store.open_handoffs()):
         return "Needs you", True
     stage = order["stage"]
-    if any(a["order_id"] == order["id"] for a in desk.store.alerts(("to_check",))):
-        return "Bank alert to check", True
-    if stage == "awaiting_payment" and order["says_paid"]:
-        return "Says paid: check your bank", True
+    if stage == "approval":
+        return "Approve the PayPal link", True
+    if stage == "awaiting_payment":
+        return ("Says paid. Not proof: waiting for PayPal" if order["says_paid"] else "Waiting for PayPal to confirm"), False
     if stage == "paid":
         return "Send it, then mark delivered", True
     if stage == "delivered":
@@ -59,7 +58,7 @@ def next_step(desk, order, cust) -> tuple[str, bool]:
     due = desk.follow_up_due(order)
     if due:
         return f"Robot follows up {_when(desk, due.isoformat())}", False
-    if stage in ("quoted", "awaiting_payment"):
+    if stage == "quoted":
         return "Robot is waiting for them", False
     return "Robot is answering", False
 
@@ -68,33 +67,28 @@ def paid_since(desk, since: datetime) -> list:
     return [o for o in desk.store.orders(("paid", "delivered")) if o["paid_at"] and parse(o["paid_at"]) >= since]
 
 
+def _mode(desk) -> str:
+    return "mock" if desk.settings.paypal_mock else desk.settings.paypal_env
+
+
 def brief(desk) -> dict:
     s, shop = desk.store, desk.shop
+    money = shop.money
     now = desk.now()
     paid = paid_since(desk, _since_yesterday(desk))
     chats = s.inbound_since(_overnight(desk))
     needs = []
-    for o in s.orders(("awaiting_payment",)):
-        if o["says_paid"]:
-            c = s.get_customer(o["customer_id"])
-            needs.append({"kind": "payment", "order_id": o["id"], "customer_id": c["id"],
-                          "channel": CHANNEL_NAMES.get(c["channel"], c["channel"]), "when": _when(desk, o["updated"]),
-                          "title": f"{_who(c)} says they paid {naira(o['total'])}",
-                          "detail": f"{desk.code(o['id'])}: {_what(desk, o)}. Check your bank app, or wait for the bank alert."})
-    for a in s.alerts(("to_check",)):
-        o = s.get_order(a["order_id"]) if a["order_id"] else None
-        c = s.get_customer(o["customer_id"]) if o else None
-        needs.append({"kind": "alert", "alert_id": a["id"], "order_id": a["order_id"], "customer_id": c["id"] if c else None,
-                      "channel": "Bank alert", "when": _when(desk, a["ts"]),
-                      "title": f"{naira(a['amount'])} from {a['sender'] or 'unknown sender'}" + (f" looks like {_who(c)}'s payment" if c else ""),
-                      "detail": f"Not confirmed by itself: {a['note']}."})
+    for o in s.orders(("approval",)):
+        c = s.get_customer(o["customer_id"])
+        needs.append({"kind": "approval", "order_id": o["id"], "customer_id": c["id"],
+                      "channel": CHANNEL_NAMES.get(c["channel"], c["channel"]), "when": _when(desk, o["updated"]),
+                      "title": f"{_who(c)} said yes: {money(o['total'])}",
+                      "detail": f"{desk.code(o['id'])}: {_what(desk, o)}. Approve it and the robot sends the PayPal link."})
     for h in s.open_handoffs():
         c = s.get_customer(h["customer_id"])
         needs.append({"kind": "handoff", "customer_id": c["id"], "channel": CHANNEL_NAMES.get(c["channel"], c["channel"]),
                       "when": _when(desk, h["created"]), "title": f"{_who(c)}: {h['reason']}",
                       "detail": f"They said: \"{h['question'][:220]}\""})
-    unmatched = [{"alert_id": a["id"], "amount": naira(a["amount"]), "sender": a["sender"] or "unknown sender",
-                  "when": _when(desk, a["ts"]), "verified": bool(a["verified"])} for a in s.alerts(("unmatched",))[:5]]
     end_of_day = datetime.combine(now.date(), time(23, 59), desk.tz)
     follows = []
     for o in s.orders(("quoted", "awaiting_payment")):
@@ -110,82 +104,60 @@ def brief(desk) -> dict:
         n = sum(1 for c in chats if c["channel"] == key)
         sold = [o for o in paid if s.get_customer(o["customer_id"])["channel"] == key]
         channels.append({"key": key, "name": CHANNEL_NAMES[key], "chats": n,
-                         "sold": f"{len(sold)} order{'s' if len(sold) != 1 else ''} · {naira(sum(o['total'] for o in sold))}" if sold else "No sales yet"})
-    waiting = sum(o["total"] for o in s.orders(("awaiting_payment",)) if o["says_paid"])
-    by_alert = sum(1 for o in paid if o["paid_by"] == "bank_alert")
+                         "sold": (f"{len(sold)} order{'s' if len(sold) != 1 else ''} · {money(sum(o['total'] for o in sold))}"
+                                  if sold else "No sales yet")})
+    waiting = sum(o["total"] for o in s.orders(("awaiting_payment",)))
     return {
         "shop": shop.name, "owner": shop.owner,
         "date": now.strftime("%A %d %b").upper(),
         "greeting": "Good morning" if now.hour < 12 else "Good afternoon" if now.hour < 17 else "Good evening",
-        "headline": _headline(len(chats), len(paid), by_alert, len(needs)),
-        "sold": naira(sum(o["total"] for o in paid)), "waiting": naira(waiting),
+        "headline": _headline(len(chats), len(paid), len(needs)),
+        "sold": money(sum(o["total"] for o in paid)), "waiting": money(waiting),
         "follow_count": sum(1 for f in follows if not f["skipped"]), "needs_count": len(needs),
-        "needs": needs, "follows": follows, "channels": channels, "unmatched": unmatched,
-        "bank_reading": bool(desk.settings.imap_host),
+        "needs": needs, "follows": follows, "channels": channels, "paypal": _mode(desk),
     }
 
 
-PLATFORMS = {"facebook": "Facebook", "instagram": "Instagram", "messenger": "Messenger", "audience_network": "Audience Network"}
-VERDICTS = {"best": "Best ad", "working": "Working", "losing": "Losing money", "too_early": "Too early", "free": "No spend"}
-
-
-def ads_card(rep: dict, notes: dict | None, live: bool, error: str = "") -> dict:
-    """The "Your ads yesterday" card: spend against confirmed sales, per ad, with Muse's note when it's ready."""
-    top = max([r["per_naira"] or 0 for r in rep["rows"]] + [1])
-    rows = []
-    for r in rep["rows"]:
-        where = " → ".join(x for x in (PLATFORMS.get(r["platform"], r["platform"].title()),
-                                       CHANNEL_NAMES.get(r["lands"], "")) if x) or "Meta ad"
-        note = (notes or {}).get(r["id"]) or {}
-        rows.append({"id": r["id"], "name": r["name"], "where": where, "platform": r["platform"],
-                     "spend": naira(r["spend"]), "chats": r["chats"], "paid": r["paid"], "back": naira(r["back"]),
-                     "per": f"₦{r['per_naira']:g} back" if r["per_naira"] else VERDICTS[r["verdict"]],
-                     "per_big": f"₦{r['per_naira']:g}" if r["per_naira"] else "₦0",
-                     "bar": round(100 * (r["per_naira"] or 0) / top), "verdict": r["verdict"],
-                     "verdict_label": VERDICTS[r["verdict"]], "haggled": r["haggled"],
-                     "note": note.get("note", ""), "by_muse": note.get("by", "rules") not in ("", "rules"),
-                     "picture": r["verdict"] in ("losing", "too_early") and bool(r["spend"])})
-    return {"live": live, "error": error, "notes_ready": notes is not None, "rows": rows,
-            "spend": naira(rep["spend"]), "back": naira(rep["back"]), "chats": rep["chats"], "paid": rep["paid"]}
-
-
-def _headline(chats: int, sold: int, by_alert: int, needs: int) -> str:
-    s = (f"Since last night the robot answered {chats} chat{'s' if chats != 1 else ''} and closed "
+def _headline(chats: int, sold: int, needs: int) -> str:
+    s = (f"Since last night the robot answered {chats} chat{'s' if chats != 1 else ''} and PayPal confirmed "
          f"{sold} order{'s' if sold != 1 else ''}.")
-    if by_alert:
-        s += f" {by_alert} payment{'s were' if by_alert != 1 else ' was'} confirmed from your bank alerts."
     s += " Nothing is waiting on you." if not needs else (" One thing is waiting on you." if needs == 1 else f" {needs} things are waiting on you.")
     return s
 
 
 def brief_text(desk) -> str:
     b = brief(desk)
-    lines = [f"{b['greeting']}, {b['owner']}. {b['headline']}", f"Sold since yesterday: {b['sold']}."]
+    lines = [f"{b['greeting']}, {b['owner']}. {b['headline']}", f"Paid since yesterday: {b['sold']}."]
     for n in b["needs"][:5]:
         lines.append(f"- {n['title']}")
     return "\n".join(lines)
 
 
 def board(desk) -> dict:
+    """One flat row per order for the AG Grid board, plus the latest PayPal events."""
     s = desk.store
+    money = desk.shop.money
     cutoff = desk.now() - timedelta(days=14)
-    cols = {k: [] for k, _ in COLUMNS}
-    for o in s.orders(tuple(cols)):
+    rows = []
+    for o in s.orders(tuple(STAGE_LABELS)):
         if o["stage"] == "delivered" and parse(o["delivered_at"] or o["updated"]) < cutoff:
             continue
         c = s.get_customer(o["customer_id"])
         step, yours = next_step(desk, o, c)
-        cols[o["stage"]].append({"order_id": o["id"], "customer_id": c["id"], "name": _who(c),
-                                 "channel": CHANNEL_NAMES.get(c["channel"], c["channel"]), "channel_key": c["channel"],
-                                 "what": _what(desk, o), "amount": naira(o["total"]) if o["total"] else "",
-                                 "next": step, "yours": yours, "code": desk.code(o["id"])})
+        rows.append({"order_id": o["id"], "customer_id": c["id"], "code": desk.code(o["id"]), "name": _who(c),
+                     "channel": CHANNEL_NAMES.get(c["channel"], c["channel"]), "what": _what(desk, o),
+                     "total": o["total"], "amount": money(o["total"]) if o["total"] else "", "stage": o["stage"],
+                     "stage_label": STAGE_LABELS[o["stage"]], "paypal": o["pp_note"] or "No link yet",
+                     "says_paid": bool(o["says_paid"]), "next": step, "yours": yours, "updated": o["updated"]})
     paid = paid_since(desk, desk.now() - timedelta(days=7))
     waiting = sum(o["total"] for o in s.orders(("awaiting_payment",)))
-    return {"shop": desk.shop.name,
-            "columns": [{"key": k, "title": t, "cards": cols[k]} for k, t in COLUMNS],
-            "totals": [{"k": "Paid this week", "v": naira(sum(o["total"] for o in paid))},
-                       {"k": "Waiting for money", "v": naira(waiting)},
-                       {"k": "Open chats", "v": str(len(cols["asking"]) + len(cols["quoted"]))}]}
+    events = [{"id": e["event_id"], "type": e["event_type"], "outcome": e["outcome"], "note": e["note"],
+               "when": _when(desk, e["ts"]), "order": desk.code(e["order_id"]) if e["order_id"] else ""}
+              for e in s.events(12)]
+    return {"shop": desk.shop.name, "rows": rows, "events": events, "paypal": _mode(desk),
+            "totals": [{"k": "Paid this week", "v": money(sum(o["total"] for o in paid))},
+                       {"k": "Awaiting PayPal", "v": money(waiting)},
+                       {"k": "Need your OK", "v": str(len(s.orders(("approval",))))}]}
 
 
 def chat(desk, customer_id: int) -> dict | None:
@@ -209,7 +181,7 @@ def chat(desk, customer_id: int) -> dict | None:
         "messages": [{"who": m["who"], "text": m["text"], "when": _when(desk, m["ts"])} for m in s.history(customer_id, 60)],
         "memory": memory,
         "order": None if not o else {"id": o["id"], "code": desk.code(o["id"]), "stage": o["stage"], "what": _what(desk, o),
-                                     "total": naira(o["total"]) if o["total"] else "", "says_paid": bool(o["says_paid"]),
-                                     "paid_by": o["paid_by"]},
+                                     "total": desk.shop.money(o["total"]) if o["total"] else "", "says_paid": bool(o["says_paid"]),
+                                     "paid_by": o["paid_by"], "paypal": o["pp_note"]},
         "next": step, "yours": yours,
     }

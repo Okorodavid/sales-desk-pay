@@ -1,8 +1,0 @@
-{
-  "note": "Sample ad spend for the made-up demo shop, used when META_ADS_TOKEN isn't set. The brief labels it as a sample.",
-  "ads": [
-    {"id": "120211000000000101", "name": "Ankara Sunday sale", "platform": "instagram", "lands": "whatsapp", "spend": 4000},
-    {"id": "120211000000000102", "name": "Lace for owambe", "platform": "facebook", "lands": "whatsapp", "spend": 6000},
-    {"id": "120211000000000103", "name": "Aso-oke bridal set", "platform": "instagram", "lands": "whatsapp", "spend": 2500}
-  ]
-}

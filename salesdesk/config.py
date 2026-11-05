@@ -13,12 +13,6 @@ except ImportError:  # pragma: no cover
 
 FALLBACK_MODELS = {"claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-fable-5-1"}
 
-# Domains that send credit alerts for common Nigerian banks. CHECK these against a real alert email from the
-# shop's own bank before going live, and set BANK_ALERT_SENDERS to exactly the domains that bank uses.
-DEFAULT_ALERT_DOMAINS = ("moniepoint.com", "opay-nigeria.com", "gtbank.com", "zenithbank.com", "accessbankplc.com",
-                         "firstbanknigeria.com", "ubagroup.com", "kudabank.com", "palmpay.com", "fidelitybank.ng")
-
-
 def _bool(value: str | None, default: bool) -> bool:
     if value is None or value.strip() == "":
         return default
@@ -41,7 +35,7 @@ def _list(value: str | None, default: tuple[str, ...]) -> tuple[str, ...]:
 class Settings:
     shop_dir: Path = Path("demo")
     db_path: Path = Path("salesdesk.db")
-    timezone: str = "Africa/Lagos"
+    timezone: str = "Europe/London"
 
     # "claude" or "muse" for real shops, "gemini" for free-tier testing, "rules" for keyless demos and tests.
     provider: str = "claude"
@@ -56,12 +50,6 @@ class Settings:
     # The key also turns on voice notes, receipt reading and ad advice when PROVIDER is something else.
     meta_api_key: str = ""
     meta_model: str = "muse-spark-1.3"
-
-    # Meta ads (Marketing API, read-only): spend per ad, joined to the chats and paid orders each ad brought.
-    # Without a token the brief uses the shop's ads.json sample, labelled as a sample.
-    meta_ads_token: str = ""
-    meta_ad_account: str = ""  # act_<id> or the plain number
-    meta_graph_version: str = "v23.0"
 
     # Web server: the owner's screens, the demo phone and the webhooks.
     host: str = "127.0.0.1"
@@ -95,14 +83,28 @@ class Settings:
     telegram_token: str = ""
     owner_chat_id: int | None = None
 
-    # Bank alerts: read credit-alert emails and match them to orders waiting for money.
-    imap_host: str = ""
-    imap_user: str = ""
-    imap_password: str = ""  # a Gmail app password, never the account password
-    imap_folder: str = "INBOX"
-    alert_domains: tuple[str, ...] = field(default=DEFAULT_ALERT_DOMAINS)
-    auto_confirm: bool = True  # confirm by itself only when the alert is verified and matches exactly one order
-    check_alerts_minutes: int = 2
+    # PayPal. With PAYPAL_CLIENT_ID and PAYPAL_SECRET set, the desk talks to PayPal's sandbox (or live, if
+    # PAYPAL_ENV=live). Without them it talks to a built-in MOCK PayPal that behaves the same way, so the demo
+    # and the tests run offline.
+    paypal_client_id: str = ""
+    paypal_secret: str = ""
+    paypal_webhook_id: str = ""  # the Webhook ID PayPal shows after you add the webhook in the developer dashboard
+    paypal_env: str = "sandbox"  # sandbox | live
+    public_url: str = ""  # where PayPal and the buyer's browser reach this server (a tunnel or the Render address)
+
+    @property
+    def paypal_mock(self) -> bool:
+        return not (self.paypal_client_id and self.paypal_secret)
+
+    @property
+    def paypal_base(self) -> str:
+        if self.paypal_mock:
+            return f"http://{self.host}:{self.port}/mock-paypal"
+        return "https://api-m.paypal.com" if self.paypal_env == "live" else "https://api-m.sandbox.paypal.com"
+
+    @property
+    def site_url(self) -> str:
+        return (self.public_url or f"http://{self.host}:{self.port}").rstrip("/")
 
     # Behaviour.
     history_messages: int = 12
@@ -129,7 +131,7 @@ def load_settings(env_file: str | os.PathLike | None = ".env") -> Settings:
     return Settings(
         shop_dir=Path(env("SHOP_DIR") or "demo"),
         db_path=Path(env("DB_PATH") or "salesdesk.db"),
-        timezone=env("TIMEZONE") or "Africa/Lagos",
+        timezone=env("TIMEZONE") or "Europe/London",
         provider=provider,
         model=env("MODEL") or "claude-sonnet-5-5",
         effort=env("EFFORT") or "low",
@@ -139,9 +141,6 @@ def load_settings(env_file: str | os.PathLike | None = ".env") -> Settings:
         gemini_model=env("GEMINI_MODEL") or "gemini-3.5-flash-lite",
         meta_api_key=env("META_API_KEY") or "",
         meta_model=env("META_MODEL") or "muse-spark-1.3",
-        meta_ads_token=env("META_ADS_TOKEN") or "",
-        meta_ad_account=env("META_AD_ACCOUNT") or "",
-        meta_graph_version=env("META_GRAPH_VERSION") or "v23.0",
         host=env("HOST") or "127.0.0.1",
         port=_int(env("PORT"), 8792) or 8792,
         demo_key=env("DEMO_KEY") or "",
@@ -164,13 +163,11 @@ def load_settings(env_file: str | os.PathLike | None = ".env") -> Settings:
         smtp_from=env("SMTP_FROM") or env("SMTP_USER") or "",
         telegram_token=env("TELEGRAM_BOT_TOKEN") or "",
         owner_chat_id=_int(env("OWNER_CHAT_ID"), None),
-        imap_host=env("IMAP_HOST") or "",
-        imap_user=env("IMAP_USER") or "",
-        imap_password=env("IMAP_PASSWORD") or "",
-        imap_folder=env("IMAP_FOLDER") or "INBOX",
-        alert_domains=_list(env("BANK_ALERT_SENDERS"), DEFAULT_ALERT_DOMAINS),
-        auto_confirm=_bool(env("AUTO_CONFIRM"), True),
-        check_alerts_minutes=_int(env("CHECK_ALERTS_MINUTES"), 2) or 2,
+        paypal_client_id=env("PAYPAL_CLIENT_ID") or "",
+        paypal_secret=env("PAYPAL_SECRET") or "",
+        paypal_webhook_id=env("PAYPAL_WEBHOOK_ID") or "",
+        paypal_env=(env("PAYPAL_ENV") or "sandbox").strip().lower(),
+        public_url=env("PUBLIC_URL") or "",
         history_messages=_int(env("HISTORY_MESSAGES"), 12) or 12,
         daily_cap=_int(env("DAILY_CAP"), 600) or 600,
         summary_hour=_int(env("SUMMARY_HOUR"), 8) or 8,

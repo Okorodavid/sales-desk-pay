@@ -9,8 +9,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
-def naira(amount: int) -> str:
-    return "₦" + f"{int(amount):,}"
+SYMBOLS = {"GBP": "£", "USD": "$", "EUR": "€", "NGN": "₦"}
+
+
+def money_text(amount: int, currency: str = "GBP") -> str:
+    """Whole units, e.g. £38. The shop prices in whole pounds so every total stays an exact integer."""
+    return SYMBOLS.get(currency, currency + " ") + f"{int(amount):,}"
 
 
 @dataclass
@@ -18,7 +22,7 @@ class Product:
     sku: str
     name: str
     unit: str  # yard | set | piece
-    price: int  # per unit, in naira
+    price: int  # per unit, whole pounds (or whole units of the shop's currency)
     stock: int
     words: list[str] = field(default_factory=list)
 
@@ -43,7 +47,7 @@ class Shop:
     city: str
     about: str
     hours: str
-    pay_to: str
+    currency: str
     bulk_over_yards: int
     follow_up_hours: int
     max_follow_ups: int
@@ -51,6 +55,9 @@ class Shop:
     products: dict[str, Product]
     zones: dict[str, Zone]
     faq: list[tuple[str, str]]
+
+    def money(self, amount: int) -> str:
+        return money_text(amount, self.currency)
 
     def zone_for(self, text: str) -> Zone | None:
         """The delivery zone named in a place or area, e.g. 'Independence Layout' -> Enugu city."""
@@ -67,19 +74,19 @@ class Shop:
         return sorted({w for p in self.products.values() for w in p.words} | {self.name, self.owner})
 
     def prices(self) -> set[int]:
-        """Every naira amount the robot may say without a quote: unit prices and delivery fees."""
+        """Every money amount the robot may say without a quote: unit prices and delivery fees."""
         return {p.price for p in self.products.values()} | {z.fee for z in self.zones.values() if z.fee}
 
     def facts(self) -> str:
         lines = [f'<fact id="SHOP">{self.name}, {self.city}. {self.about} Opening hours: {self.hours} '
-                 f'Payment: bank transfer only; the shop sends the account details.</fact>']
+                 f'Payment: by PayPal only. After the customer agrees a quote, {self.owner} approves and the robot sends a secure PayPal link. Cards work as a PayPal guest.</fact>']
         for p in self.products.values():
             stock = "sold out" if p.stock <= 0 else f"{p.stock} {p.unit}s in stock"
-            lines.append(f'<fact id="P:{p.sku}">{p.name}: {naira(p.price)} per {p.unit}, {stock}.</fact>')
+            lines.append(f'<fact id="P:{p.sku}">{p.name}: {self.money(p.price)} per {p.unit}, {stock}.</fact>')
             if p.words:
                 lines.append(f'<words sku="{p.sku}">{" ".join(p.words)}</words>')
         for z in self.zones.values():
-            fee = "free" if not z.fee else naira(z.fee)
+            fee = "free" if not z.fee else self.money(z.fee)
             lines.append(f'<fact id="D:{z.id}">Delivery to {z.name} ({", ".join(z.areas[:6])}): {fee}, {z.days}.</fact>')
         for i, (q, a) in enumerate(self.faq, 1):
             lines.append(f'<fact id="F{i}">{q} {a}</fact>')
@@ -107,7 +114,7 @@ def load_shop(folder: str | Path) -> Shop:
                 faq.append((q.strip(), " ".join(a.split())))
     return Shop(
         name=data["name"], owner=data.get("owner", "the owner"), city=data.get("city", ""),
-        about=data.get("about", ""), hours=data.get("hours", ""), pay_to=data.get("pay_to", "[ACCOUNT]"),
+        about=data.get("about", ""), hours=data.get("hours", ""), currency=(data.get("currency") or "GBP").upper(),
         bulk_over_yards=int(data.get("bulk_over_yards", 20)), follow_up_hours=int(data.get("follow_up_hours", 20)),
         max_follow_ups=int(data.get("max_follow_ups", 2)), order_prefix=data.get("order_prefix") or _prefix(data["name"]),
         products=products, zones=zones, faq=faq,

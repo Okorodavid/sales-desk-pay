@@ -1,14 +1,12 @@
-"""Runs the web server, Telegram, the follow-up clock and the bank-alert reader on one event loop."""
+"""Runs the web server (screens, PayPal webhook, buyer pages), Telegram and the follow-up clock on one event loop."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import timedelta
 
 from aiohttp import web
 
-from .ads import AdBook
 from .brain import make_brain
 from .channels.instagram import InstagramSender
 from .channels.mail import EmailSender
@@ -16,7 +14,7 @@ from .channels.whatsapp import WhatsAppSender
 from .config import Settings
 from .deliver import Dispatcher
 from .desk import Desk
-from .payments import MailboxReader, parse_alert
+from .paypal import PayPalClient
 from .senses import Senses
 from .shop import load_shop
 from .store import Store
@@ -25,23 +23,11 @@ from .web import Web
 log = logging.getLogger("salesdesk.serve")
 
 
-async def check_mailbox(reader: MailboxReader, desk: Desk, dispatcher: Dispatcher, since) -> int:
-    """Read new bank emails, match credit alerts to orders. Returns how many alerts were new."""
-    raws = await asyncio.to_thread(reader.fetch, since)
-    new = 0
-    for raw in raws:
-        alert = parse_alert(raw, reader.allowed)
-        if alert and not desk.store.seen_alert(alert.msg_id):
-            new += 1
-            await dispatcher.deliver(desk.bank_alert(alert))
-    return new
-
-
 async def serve(settings: Settings) -> None:
     store = Store(settings.db_path)
     shop = load_shop(settings.shop_dir)
-    desk = Desk(settings, store, shop, make_brain(settings), senses=Senses.from_settings(settings))
-    adbook = AdBook.from_settings(settings)
+    paypal = PayPalClient.from_settings(settings)
+    desk = Desk(settings, store, shop, make_brain(settings), senses=Senses.from_settings(settings), paypal=paypal)
     if settings.demo_tools and not store.customers():
         from .seed import seed
 
@@ -53,8 +39,6 @@ async def serve(settings: Settings) -> None:
                        settings.smtp_from, shop.name)
     dispatcher = Dispatcher(store, wa if wa.ready else None, ig if ig.ready else None, mail if mail.ready else None,
                             None, settings.owner_chat_id)
-    reader = MailboxReader(settings.imap_host, settings.imap_user, settings.imap_password, settings.imap_folder,
-                           settings.alert_domains)
     stops = []
     try:
         if settings.telegram_token:
@@ -73,32 +57,25 @@ async def serve(settings: Settings) -> None:
                 await tg.shutdown()
             stops.append(stop_tg)
 
-        runner = web.AppRunner(Web(settings, desk, dispatcher, adbook).app())
+        runner = web.AppRunner(Web(settings, desk, dispatcher).app())
         await runner.setup()
         await web.TCPSite(runner, settings.host, settings.port).start()
         stops.append(runner.cleanup)
-        log.info("%s on %s. Brief: http://%s:%s/", shop.name, settings.active_model, settings.host, settings.port)
-        log.info("Meta: voice notes and receipts %s; ad spend from %s.", "on" if desk.senses.ready else "off (set META_API_KEY)",
-                 "the Marketing API" if adbook.live else "the shop's ads.json sample")
-        log.info("WhatsApp: %s. Instagram: %s. Email replies: %s. Bank alerts: %s (auto-confirm %s).",
-                 "on" if wa.ready else "off", "on" if ig.ready else "off", "on" if mail.ready else "off",
-                 "reading " + settings.imap_user if reader.ready else "off (set IMAP_*)", "on" if settings.auto_confirm else "off")
-
-        since = desk.now() - timedelta(days=1)
-        next_mail = desk.now()
-        while True:  # the clock: follow-ups, the morning brief, the mailbox
+        log.info("%s on %s. Brief: http://%s:%s/  Board: /board  Phone: /phone", shop.name, settings.active_model,
+                 settings.host, settings.port)
+        if settings.paypal_mock:
+            log.info("PayPal: MOCK (no PAYPAL_CLIENT_ID / PAYPAL_SECRET set). The built-in mock PayPal runs at /mock-paypal.")
+        else:
+            log.info("PayPal: %s. Webhook: %s/paypal/webhook (Webhook ID %s)", settings.paypal_env, settings.site_url,
+                     "set" if settings.paypal_webhook_id else "MISSING: set PAYPAL_WEBHOOK_ID, no payment can be confirmed without it")
+        log.info("Meta: voice notes and receipts %s. WhatsApp: %s. Instagram: %s. Email replies: %s.",
+                 "on" if desk.senses.ready else "off (set META_API_KEY)", "on" if wa.ready else "off",
+                 "on" if ig.ready else "off", "on" if mail.ready else "off")
+        while True:  # the clock: follow-ups and the morning brief
             try:
                 await dispatcher.deliver(desk.tick())
             except Exception:
                 log.exception("tick failed")
-            if reader.ready and desk.now() >= next_mail:
-                next_mail = desk.now() + timedelta(minutes=settings.check_alerts_minutes)
-                try:
-                    n = await check_mailbox(reader, desk, dispatcher, since)
-                    if n:
-                        log.info("bank alerts: %s new", n)
-                except Exception as exc:
-                    log.warning("mailbox check failed: %s", exc)
             await asyncio.sleep(30)
     finally:
         for stop in reversed(stops):
@@ -106,6 +83,7 @@ async def serve(settings: Settings) -> None:
                 await stop()
             except Exception as exc:  # pragma: no cover
                 log.warning("shutdown: %s", exc)
+        await paypal.aclose()
         await wa.aclose()
         await ig.aclose()
         store.close()

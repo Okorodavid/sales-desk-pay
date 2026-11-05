@@ -9,8 +9,8 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 UTC = ZoneInfo("UTC")
-OPEN_STAGES = ("asking", "quoted", "awaiting_payment", "paid")
-STAGES = ("asking", "quoted", "awaiting_payment", "paid", "delivered", "cancelled")
+OPEN_STAGES = ("asking", "quoted", "approval", "awaiting_payment", "paid")
+STAGES = ("asking", "quoted", "approval", "awaiting_payment", "paid", "delivered", "cancelled")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS customers (
@@ -47,7 +47,11 @@ CREATE TABLE IF NOT EXISTS orders (
     total INTEGER DEFAULT 0,
     says_paid INTEGER DEFAULT 0,      -- the customer says they paid; waiting for proof
     receipt TEXT DEFAULT '',
-    paid_by TEXT DEFAULT '',          -- owner | bank_alert
+    paid_by TEXT DEFAULT '',          -- always 'paypal': only a signature-verified PayPal event sets an order to paid
+    pp_order_id TEXT DEFAULT '',      -- the PayPal order made after the owner approved the link
+    pp_link TEXT DEFAULT '',          -- the buyer's PayPal approval link
+    pp_capture_id TEXT DEFAULT '',    -- the capture that the verified webhook reported
+    pp_note TEXT DEFAULT '',          -- the last thing PayPal told us, in plain words (for the board)
     follow_ups INTEGER DEFAULT 0,
     skip_day TEXT DEFAULT '',         -- local date the owner skipped today's follow-up
     created TEXT NOT NULL,
@@ -64,23 +68,17 @@ CREATE TABLE IF NOT EXISTS handoffs (
     ref TEXT DEFAULT '',
     created TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS alerts (
-    id INTEGER PRIMARY KEY,
-    msg_id TEXT UNIQUE,
-    amount INTEGER NOT NULL,
-    sender TEXT DEFAULT '',
-    narration TEXT DEFAULT '',
-    bank TEXT DEFAULT '',
-    verified INTEGER DEFAULT 0,
+CREATE TABLE IF NOT EXISTS paypal_events (
+    event_id TEXT PRIMARY KEY,        -- PayPal's event id: a repeat delivery is recognised and ignored
+    event_type TEXT NOT NULL,
     order_id INTEGER,
-    status TEXT NOT NULL,             -- confirmed | to_check | unmatched | owner_confirmed | dismissed
+    outcome TEXT NOT NULL,            -- paid | ignored | rejected | duplicate
     note TEXT DEFAULT '',
     ts TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS usage (day TEXT PRIMARY KEY, calls INTEGER DEFAULT 0);
-CREATE TABLE IF NOT EXISTS ad_notes (sig TEXT PRIMARY KEY, data TEXT NOT NULL, ts TEXT NOT NULL);
 """
-ADDED_COLUMNS = {"customers": ("ad_id", "ad_name", "ad_click", "ad_at")}  # for databases made before these existed
+ADDED_COLUMNS = {"customers": ("ad_id", "ad_name", "ad_click", "ad_at")}  # kept so a database from Sales Desk still opens
 
 
 def iso(dt: datetime) -> str:
@@ -107,7 +105,7 @@ class Store:
         self.db.close()
 
     def reset(self) -> None:
-        for table in ("customers", "messages", "orders", "handoffs", "alerts", "usage", "ad_notes"):
+        for table in ("customers", "messages", "orders", "handoffs", "paypal_events", "usage"):
             self.db.execute(f"DELETE FROM {table}")
         self.db.commit()
 
@@ -148,21 +146,10 @@ class Store:
         self._exec("UPDATE customers SET ad_id=?, ad_name=?, ad_click=?, ad_at=? WHERE id=? AND ad_id=''",
                    (ad_id[:64], name[:120], click[:200], iso(now), cid))
 
-    def ad_customers(self, since: datetime) -> list[sqlite3.Row]:
-        return self.db.execute("SELECT * FROM customers WHERE ad_id!='' AND ad_at>=? ORDER BY id", (iso(since),)).fetchall()
-
     def customer_texts(self, cid: int, limit: int = 6) -> list[str]:
         rows = self.db.execute("SELECT text FROM messages WHERE customer_id=? AND who='customer' ORDER BY id DESC LIMIT ?",
                                (cid, limit)).fetchall()
         return [r["text"] for r in reversed(rows)]
-
-    # Ad notes (Muse's advice, cached by the numbers it was given) -----------------------------
-    def ad_note(self, sig: str) -> dict | None:
-        row = self.db.execute("SELECT data FROM ad_notes WHERE sig=?", (sig,)).fetchone()
-        return json.loads(row["data"]) if row else None
-
-    def save_ad_note(self, sig: str, data: dict, now: datetime) -> None:
-        self._exec("INSERT OR REPLACE INTO ad_notes(sig, data, ts) VALUES(?,?,?)", (sig, json.dumps(data), iso(now)))
 
     # Messages --------------------------------------------------------------------------------
     def add_message(self, cid: int, who: str, text: str, now: datetime) -> None:
@@ -216,7 +203,7 @@ class Store:
         return self.db.execute(f"SELECT * FROM orders WHERE stage IN ({marks}) ORDER BY updated DESC", stages).fetchall()
 
     def waiting_for_money(self) -> list[sqlite3.Row]:
-        return self.db.execute("SELECT * FROM orders WHERE stage IN ('quoted','awaiting_payment') AND total>0").fetchall()
+        return self.db.execute("SELECT * FROM orders WHERE stage IN ('quoted','approval','awaiting_payment') AND total>0").fetchall()
 
     # Hand-overs ------------------------------------------------------------------------------
     def add_handoff(self, cid: int, reason: str, question: str, now: datetime) -> int:
@@ -241,25 +228,21 @@ class Store:
     def handoff_by_ref(self, ref: str) -> sqlite3.Row | None:
         return self.db.execute("SELECT * FROM handoffs WHERE ref=?", (ref,)).fetchone()
 
-    # Bank alerts -----------------------------------------------------------------------------
-    def seen_alert(self, msg_id: str) -> bool:
-        return bool(msg_id) and self.db.execute("SELECT 1 FROM alerts WHERE msg_id=?", (msg_id,)).fetchone() is not None
+    # PayPal events ---------------------------------------------------------------------------
+    def seen_event(self, event_id: str) -> bool:
+        return self.db.execute("SELECT 1 FROM paypal_events WHERE event_id=?", (event_id,)).fetchone() is not None
 
-    def add_alert(self, now: datetime, **fields) -> int:
-        fields["ts"] = iso(now)
-        cols = ", ".join(fields)
-        return self._exec(f"INSERT INTO alerts({cols}) VALUES({','.join('?' * len(fields))})", tuple(fields.values())).lastrowid
+    def add_event(self, now: datetime, event_id: str, event_type: str, order_id: int | None, outcome: str, note: str = "") -> None:
+        self._exec("INSERT OR IGNORE INTO paypal_events(event_id, event_type, order_id, outcome, note, ts) VALUES(?,?,?,?,?,?)",
+                   (event_id, event_type[:80], order_id, outcome, note[:300], iso(now)))
 
-    def get_alert(self, aid: int) -> sqlite3.Row | None:
-        return self.db.execute("SELECT * FROM alerts WHERE id=?", (aid,)).fetchone()
+    def events(self, limit: int = 15) -> list[sqlite3.Row]:
+        return self.db.execute("SELECT * FROM paypal_events ORDER BY ts DESC, rowid DESC LIMIT ?", (limit,)).fetchall()
 
-    def update_alert(self, aid: int, **fields) -> None:
-        sets = ", ".join(f"{k}=?" for k in fields)
-        self._exec(f"UPDATE alerts SET {sets} WHERE id=?", (*fields.values(), aid))
-
-    def alerts(self, statuses: tuple[str, ...]) -> list[sqlite3.Row]:
-        marks = ",".join("?" * len(statuses))
-        return self.db.execute(f"SELECT * FROM alerts WHERE status IN ({marks}) ORDER BY id DESC", statuses).fetchall()
+    def order_by_paypal_id(self, pp_order_id: str) -> sqlite3.Row | None:
+        if not pp_order_id:
+            return None
+        return self.db.execute("SELECT * FROM orders WHERE pp_order_id=?", (pp_order_id,)).fetchone()
 
     # Cost guard ------------------------------------------------------------------------------
     def bump_calls(self, day: str) -> int:
