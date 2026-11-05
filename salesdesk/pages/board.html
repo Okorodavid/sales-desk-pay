@@ -3,25 +3,49 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Order board · Sales Desk</title>
+<title>Order board · Sales Desk Pay</title>
 <link rel="stylesheet" href="/app.css">
+<script src="https://cdn.jsdelivr.net/npm/ag-grid-community@33.3.2/dist/ag-grid-community.min.js"></script>
+<style>
+  .grid-wrap { flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+  #grid { height: 440px; width: 100%; }
+  #events { height: 230px; width: 100%; }
+  .pill { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 999px; font-size: 13px; font-weight: 600; background: var(--col); color: var(--ink-2); }
+  .pill.approval { background: var(--orange-soft); color: var(--orange); }
+  .pill.awaiting_payment { background: var(--blue-soft); color: var(--blue); }
+  .pill.paid, .pill.delivered { background: var(--green-soft); color: var(--green); }
+  .pill.refused, .pill.rejected { background: #FBE3E3; color: #9B1C1C; }
+  .pp-paid { color: var(--green); font-weight: 600; }
+  .pp-warn { color: #9B1C1C; font-weight: 600; }
+  .mode { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 8px; font-size: 12px; font-weight: 700; letter-spacing: .04em; }
+  .mode.mock { background: #FFF3CD; color: #7A5B00; }
+  .mode.sandbox { background: var(--blue-soft); color: var(--blue); }
+  .mode.live { background: var(--green-soft); color: var(--green); }
+  .grid-btn { height: 30px; padding: 0 12px; border-radius: 8px; border: 0; background: var(--green); color: #fff; font-weight: 600; font-size: 13px; line-height: 1; }
+  .grid-btn.dark { background: var(--ink); }
+</style>
 </head>
 <body>
 <div class="wrap wide">
   <header class="top" style="align-items:flex-end">
     <div style="display:flex;flex-direction:column;gap:4px">
       <span class="eyebrow" id="shop"></span>
-      <h1 style="font-size:34px">Every chat is an order on its way</h1>
+      <h1 style="font-size:34px">Orders and PayPal</h1>
     </div>
+    <span class="mode" id="mode"></span>
     <div class="grow"></div>
     <div id="totals" style="display:flex;flex-wrap:wrap;gap:8px"></div>
     <nav class="nav" style="width:100%"><a data-link href="/">Morning brief</a><a data-link href="/phone" id="phoneLink">Demo phone</a></nav>
   </header>
 
   <div class="row">
-    <div class="board-scroll"><div class="cols" id="cols"></div></div>
+    <div class="grid-wrap">
+      <div id="grid"></div>
+      <h2 style="font-size:20px">What PayPal told us</h2>
+      <div id="events"></div>
+    </div>
     <aside class="drawer" id="drawer" aria-label="Chat">
-      <span class="meta">Pick a card to see the chat.</span>
+      <span class="meta">Pick an order to see the chat.</span>
     </aside>
   </div>
 </div>
@@ -44,25 +68,73 @@ async function api(path, body) {
 }
 function toast(text) { const t = $("toast"); t.textContent = text; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 2200); }
 
+// AG Grid Community: the order board ---------------------------------------------------------------------
+const theme = agGrid.themeQuartz.withParams({
+  fontFamily: "Inter, system-ui, sans-serif", accentColor: "#0B6B45", backgroundColor: "#FFFFFF",
+  borderColor: "#E4E1D8", headerBackgroundColor: "#FAF9F6", rowHoverColor: "#F4F2EC", fontSize: 14,
+});
+const stageCell = (p) => `<span class="pill ${esc(p.data.stage)}">${esc(p.data.stage_label)}</span>`;
+const paypalCell = (p) => {
+  const t = p.data.paypal || "";
+  const cls = p.data.stage === "paid" || p.data.stage === "delivered" ? "pp-paid" : /not paid|does not match|not match|failed/i.test(t) ? "pp-warn" : "";
+  return `<span class="${cls}">${esc(t)}</span>`;
+};
+const actionCell = (p) => {
+  const d = p.data;
+  if (d.stage === "approval") return `<button class="grid-btn" data-act="approve" data-order="${d.order_id}">Approve PayPal link</button>`;
+  if (d.stage === "paid") return `<button class="grid-btn dark" data-act="delivered" data-order="${d.order_id}">Mark delivered</button>`;
+  return "";
+};
+const orderGrid = agGrid.createGrid($("grid"), {
+  theme,
+  getRowId: (p) => String(p.data.order_id),
+  enableCellChangeFlash: true,
+  rowSelection: { mode: "singleRow", checkboxes: false, enableClickSelection: true },
+  columnDefs: [
+    { field: "code", headerName: "Order", width: 100, sort: "desc" },
+    { field: "name", headerName: "Customer", width: 140 },
+    { field: "channel", headerName: "Channel", width: 110 },
+    { field: "what", headerName: "What", flex: 2, minWidth: 180 },
+    { field: "amount", headerName: "Total", width: 90, comparator: (a, b, na, nb) => (na.data.total || 0) - (nb.data.total || 0) },
+    { field: "stage_label", headerName: "Stage", width: 150, cellRenderer: stageCell, filter: true },
+    { field: "paypal", headerName: "PayPal says", flex: 2, minWidth: 220, cellRenderer: paypalCell },
+    { field: "next", headerName: "Next step", flex: 2, minWidth: 190 },
+    { headerName: "", width: 190, cellRenderer: actionCell, sortable: false, suppressCellFlash: true },
+  ],
+  defaultColDef: { sortable: true, resizable: true, suppressMovable: true },
+  onRowClicked: (e) => { selected = e.data.customer_id; draft = ""; history.replaceState(null, "", withKey("/board?c=" + selected)); loadChat(); },
+  overlayNoRowsTemplate: "No orders yet",
+});
+const eventGrid = agGrid.createGrid($("events"), {
+  theme,
+  getRowId: (p) => p.data.id,
+  columnDefs: [
+    { field: "when", headerName: "When", width: 110 },
+    { field: "type", headerName: "PayPal event", flex: 2, minWidth: 200 },
+    { field: "order", headerName: "Order", width: 90 },
+    { field: "outcome", headerName: "Result", width: 120, cellRenderer: (p) => `<span class="pill ${esc(p.value)}">${esc(p.value)}</span>` },
+    { field: "note", headerName: "Why", flex: 3, minWidth: 260 },
+  ],
+  defaultColDef: { resizable: true, suppressMovable: true },
+  overlayNoRowsTemplate: "Nothing from PayPal yet. Only signed messages show here; forged ones are refused before they get this far.",
+});
+
 function renderBoard(b) {
   $("shop").textContent = b.shop.toUpperCase();
+  const mode = $("mode");
+  mode.className = "mode " + b.paypal;
+  mode.textContent = b.paypal === "mock" ? "MOCK PAYPAL" : b.paypal === "live" ? "PAYPAL LIVE" : "PAYPAL SANDBOX";
   $("totals").innerHTML = b.totals.map((t) => `<span class="tile" style="padding:10px 14px;gap:0;border-radius:14px"><span style="font-size:12px">${esc(t.k)}</span><b style="font-size:20px">${esc(t.v)}</b></span>`).join("");
-  $("cols").innerHTML = b.columns.map((col) => `<section class="col"><h2>${esc(col.title)} <span>${col.cards.length}</span></h2>${col.cards.map((c) => `
-    <button type="button" class="card ${c.customer_id === selected ? "on" : ""}" data-customer="${c.customer_id}">
-      <span class="meta" style="display:flex;align-items:center;gap:6px"><span class="dot ${esc(c.channel_key)}"></span>${esc(c.channel)} · ${esc(c.code)}</span>
-      <span class="nm">${esc(c.name)}</span><span class="wt">${esc(c.what)}</span>
-      ${c.amount ? `<span class="amt">${esc(c.amount)}</span>` : ""}
-      <span class="chip ${c.yours ? "you" : ""}">${esc(c.next)}</span>
-    </button>`).join("")}</section>`).join("");
+  orderGrid.setGridOption("rowData", b.rows);
+  eventGrid.setGridOption("rowData", b.events);
 }
 
 function renderChat(c) {
   const o = c.order;
   let acts = "";
-  if (o && o.stage === "awaiting_payment") acts += `<button class="btn green" data-act="confirm" data-order="${o.id}">Money is in</button>${o.says_paid ? `<button class="btn" data-act="notseen" data-order="${o.id}">Not yet</button>` : ""}`;
-  if (o && o.stage === "quoted") acts += `<button class="btn green" data-act="confirm" data-order="${o.id}">Money is in</button>`;
+  if (o && o.stage === "approval") acts += `<button class="btn green" data-act="approve" data-order="${o.id}">Approve PayPal link</button>`;
   if (o && o.stage === "paid") acts += `<button class="btn dark" data-act="delivered" data-order="${o.id}">Mark delivered</button>`;
-  const paidNote = o && o.paid_by === "bank_alert" ? `<span class="chip ok">Confirmed from a bank alert</span>` : "";
+  const paidNote = o && o.paid_by === "paypal" ? `<span class="chip ok">Confirmed by a verified PayPal event</span>` : o && o.says_paid ? `<span class="chip you">Says paid. Not proof.</span>` : "";
   $("drawer").innerHTML = `
     <div style="display:flex;flex-wrap:wrap;align-items:flex-start;gap:10px">
       <div style="display:flex;flex-direction:column;gap:3px;flex:1 1 160px">
@@ -92,23 +164,20 @@ function renderChat(c) {
   t.scrollTop = t.scrollHeight;
 }
 
+async function loadChat() {
+  try { if (selected && document.activeElement?.id !== "replyText") renderChat(await api(`/api/chat/${selected}`)); } catch (e) {}
+}
 async function load() {
-  try {
-    renderBoard(await api("/api/board"));
-    if (selected && document.activeElement?.id !== "replyText") renderChat(await api(`/api/chat/${selected}`));
-  } catch (e) { toast("Can't reach the desk right now."); }
+  try { renderBoard(await api("/api/board")); await loadChat(); } catch (e) { toast("Can't reach the desk right now."); }
 }
 
 document.addEventListener("click", async (e) => {
-  const card = e.target.closest("button.card");
-  if (card) { selected = Number(card.dataset.customer); draft = ""; history.replaceState(null, "", withKey("/board?c=" + selected)); load(); return; }
   const b = e.target.closest("button[data-act]");
   if (!b) return;
   b.disabled = true;
   const { act, order } = b.dataset;
   try {
-    if (act === "confirm") { await api(`/api/order/${order}/confirm`, {}); toast("Confirmed. The customer has been told."); }
-    if (act === "notseen") { await api(`/api/order/${order}/not-seen`, {}); toast("The robot told them it hasn't landed yet."); }
+    if (act === "approve") { await api(`/api/order/${order}/approve`, {}); toast("Approved. The PayPal link is on its way to the customer."); }
     if (act === "delivered") { await api(`/api/order/${order}/delivered`, {}); toast("Marked delivered."); }
     if (act === "takeover") { await api(`/api/customer/${selected}/takeover`, { on: b.dataset.on === "1" }); toast(b.dataset.on === "1" ? "You have this chat. The robot stays quiet." : "The robot is back on this chat."); }
   } catch (err) { toast("That didn't work. Try again."); }
@@ -131,7 +200,7 @@ document.addEventListener("submit", async (e) => {
 
 fetch(withKey("/phone"), { method: "HEAD" }).then((r) => { if (!r.ok) $("phoneLink").remove(); }).catch(() => $("phoneLink").remove());
 load();
-setInterval(load, 4000);
+setInterval(load, 2000);
 </script>
 </body>
 </html>

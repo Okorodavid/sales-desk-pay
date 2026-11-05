@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Morning brief · Sales Desk</title>
+<title>Morning brief · Sales Desk Pay</title>
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
@@ -11,7 +11,7 @@
   <header class="top">
     <span class="eyebrow" id="date"></span>
     <div class="grow"></div>
-    <nav class="nav"><a data-link href="/board">Order board</a><a data-link href="/shelf">Shelf camera</a><a data-link href="/phone" id="phoneLink">Demo phone</a></nav>
+    <nav class="nav"><a data-link href="/board">Order board</a><a data-link href="/phone" id="phoneLink">Demo phone</a></nav>
   </header>
 
   <section style="display:flex;flex-direction:column;gap:12px;max-width:840px">
@@ -19,18 +19,9 @@
     <p id="headline" style="margin:0;font-size:19px;color:var(--ink-2)"></p>
   </section>
 
-  <section class="ask" aria-label="Ask Sales Desk">
-    <form class="ask-bar" id="askForm">
-      <button type="button" class="mic" id="askMic" aria-label="Ask by voice"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
-      <input id="askText" autocomplete="off" placeholder="Ask about your shop" aria-label="Ask about your shop">
-      <button class="btn dark" id="askGo">Ask</button>
-    </form>
-    <div class="ask-out" id="askOut" hidden><span class="meta" id="askQ"></span><p id="askA"></p></div>
-  </section>
-
   <section class="tiles" aria-label="Numbers">
-    <div class="tile dark"><span>Sold since yesterday</span><b id="sold">₦0</b></div>
-    <div class="tile"><span>Transfers to check</span><b id="waiting" style="color:var(--green)">₦0</b></div>
+    <div class="tile dark"><span>Paid by PayPal since yesterday</span><b id="sold">£0</b></div>
+    <div class="tile"><span>Awaiting PayPal</span><b id="waiting" style="color:var(--green)">£0</b></div>
     <div class="tile"><span>Follow-ups today</span><b id="followCount">0</b></div>
     <div class="tile"><span>Waiting on you</span><b id="needsCount" style="color:var(--orange)">0</b></div>
   </section>
@@ -45,33 +36,8 @@
         <h2 style="font-size:20px">The robot follows up today</h2>
         <div id="follows"></div>
       </section>
-      <section class="panel" aria-label="Bank alerts">
-        <h2 style="font-size:20px">Money in, no order</h2>
-        <div id="unmatched"></div>
-        <span class="meta" id="bankState"></span>
-      </section>
     </div>
   </div>
-
-  <section id="ads" style="display:flex;flex-direction:column;gap:12px" aria-label="Your ads yesterday" hidden>
-    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px">
-      <h2 style="font-size:24px">Your ads yesterday</h2>
-      <span class="chip" id="adSource"></span>
-    </div>
-    <div class="adt">
-      <div class="adt-sum">
-        <span><span class="meta">Spent on Meta ads</span><b id="adSpend"></b></span>
-        <span class="arrow" aria-hidden="true">→</span>
-        <span><span class="meta">Paid orders from them</span><b class="back" id="adBack"></b></span>
-        <span class="meta" id="adCounts" style="flex-basis:100%"></span>
-      </div>
-      <div class="adt-head" aria-hidden="true"><span>Ad</span><span>Spent</span><span>Chats</span><span>Paid orders</span><span>Back for every ₦1</span></div>
-      <div id="adRows"></div>
-      <div class="muse" id="adMuse"></div>
-      <div class="acts" id="adActs"></div>
-      <div class="draft" id="adDraft"></div>
-    </div>
-  </section>
 
   <section style="display:flex;flex-direction:column;gap:12px" aria-label="Channels">
     <h2 style="font-size:24px">Where the chats came from</h2>
@@ -96,14 +62,13 @@ function toast(text) { const t = $("toast"); t.textContent = text; t.classList.a
 
 function needCard(n) {
   let acts = "";
-  if (n.kind === "payment") acts = `<button class="btn green" data-act="confirm" data-order="${n.order_id}">Money is in</button><button class="btn" data-act="notseen" data-order="${n.order_id}">Not yet</button>`;
-  if (n.kind === "alert") acts = `<button class="btn green" data-act="alertok" data-alert="${n.alert_id}">Money is in</button><button class="btn" data-act="alertno" data-alert="${n.alert_id}">Not ours</button>`;
+  if (n.kind === "approval") acts = `<button class="btn green" data-act="approve" data-order="${n.order_id}">Approve PayPal link</button><a class="btn" style="display:inline-flex;align-items:center;text-decoration:none" href="${withKey("/board?c=" + n.customer_id)}">See chat</a>`;
   if (n.kind === "handoff") acts = `<a class="btn dark" style="display:inline-flex;align-items:center;color:#fff;text-decoration:none" href="${withKey("/board?c=" + n.customer_id)}">Reply</a><button class="btn" data-act="robot" data-customer="${n.customer_id}">Let the robot handle it</button>`;
   return `<div class="need"><div class="txt"><span class="meta">${esc(n.channel)} · ${esc(n.when)}</span><span class="title">${esc(n.title)}</span><span class="detail">${esc(n.detail)}</span></div><div class="acts">${acts}</div></div>`;
 }
 
 function render(b) {
-  $("date").textContent = `${b.shop.toUpperCase()} · ${b.date}`;
+  $("date").textContent = `${b.shop.toUpperCase()} · ${b.date} · ${b.paypal === "mock" ? "MOCK PAYPAL" : "PAYPAL " + b.paypal.toUpperCase()}`;
   $("hello").textContent = `${b.greeting}, ${b.owner}.`;
   $("headline").textContent = b.headline;
   $("sold").textContent = b.sold;
@@ -112,115 +77,24 @@ function render(b) {
   $("needsCount").textContent = b.needs_count;
   $("needs").innerHTML = b.needs.length ? b.needs.map(needCard).join("") : `<div class="empty">Nothing is waiting on you. The robot has it.</div>`;
   $("follows").innerHTML = b.follows.length ? b.follows.map((f) => `<div class="line ${f.skipped ? "skipped" : ""}"><span class="when">${esc(f.time)}</span><span class="who"><b>${esc(f.name)}</b><span>${f.skipped ? "Skipped today" : esc(f.about)}</span></span><button class="btn" data-act="skip" data-order="${f.order_id}" data-skip="${f.skipped ? 0 : 1}" aria-label="${f.skipped ? "Undo skip for" : "Skip follow-up for"} ${esc(f.name)}">${f.skipped ? "Undo" : "Skip"}</button></div>`).join("") : `<span class="meta">No follow-ups due today.</span>`;
-  $("unmatched").innerHTML = b.unmatched.length ? b.unmatched.map((a) => `<div class="line"><span class="who"><b>${esc(a.amount)}</b><span>${esc(a.sender)} · ${esc(a.when)}${a.verified ? "" : " · not signed by your bank"}</span></span><button class="btn" data-act="alertno" data-alert="${a.alert_id}">Dismiss</button></div>`).join("") : `<span class="meta">Every payment matched an order.</span>`;
-  $("bankState").textContent = b.bank_reading ? "Reading your bank alert emails every few minutes." : "Bank alert emails aren't connected yet. See the README.";
-  renderAds(b.ads);
   $("chans").innerHTML = b.channels.map((c) => `<div class="chan"><span style="display:flex;align-items:center;gap:8px;font-weight:600"><span class="dot ${c.key}"></span>${esc(c.name)}</span><b>${c.chats} chat${c.chats === 1 ? "" : "s"}</b><span class="meta">${esc(c.sold)}</span></div>`).join("");
 }
 
-let asking = false;
-let drafting = false;
-function renderAds(a) {
-  if (!a || (!a.rows.length && !a.error)) { $("ads").hidden = true; return; }
-  $("ads").hidden = false;
-  $("adSource").textContent = a.error ? "Couldn't read your ad account" : a.live ? "From your Meta ad account" : "Sample ad spend";
-  $("adSource").className = "chip" + (a.error ? " you" : "");
-  $("adSpend").textContent = a.spend;
-  $("adBack").textContent = a.back;
-  $("adCounts").textContent = `${a.paid} paid order${a.paid === 1 ? "" : "s"} from ${a.chats} chat${a.chats === 1 ? "" : "s"}. A sale counts only once the money lands.`;
-  $("adRows").innerHTML = a.rows.map((r) => `
-    <div class="adt-row ${r.verdict === "losing" ? "losing" : ""}">
-      <span class="adt-name"><span class="meta"><span class="dot ${esc(r.platform)}"></span>${esc(r.where)}</span>${esc(r.name)}</span>
-      <span class="adt-num" data-l="Spent">${esc(r.spend)}</span><span class="adt-num" data-l="Chats">${r.chats}</span>
-      <span class="adt-num" data-l="Paid orders">${r.paid ? `${r.paid} · ${esc(r.back)}` : "0"}</span>
-      <span class="adt-ret"><span class="chip ${r.verdict === "best" ? "best" : r.verdict === "losing" ? "losing" : ""}">${esc(r.per)}</span><span class="adt-bar"><i style="width:${Math.max(r.bar, 3)}%"></i></span></span>
-      ${r.verdict !== "losing" && r.note ? `<span class="adt-note">${r.by_muse ? "<b>Muse:</b> " : ""}${esc(r.note)}</span>` : ""}
-    </div>`).join("");
-  const flag = a.rows.find((r) => r.verdict === "losing");
-  if (!a.notes_ready) {
-    $("adMuse").innerHTML = `<span class="tag">MUSE</span><span>Reading what these customers wrote…</span>`;
-    if (!asking) { asking = true; api("/api/ads/notes", {}).then(renderAds).catch(() => {}).finally(() => { asking = false; }); }
-  } else if (flag) {
-    $("adMuse").innerHTML = `<span class="tag">${flag.by_muse ? "MUSE" : "NOTE"}</span><span><b>${esc(flag.name)}:</b> ${esc(flag.note)}</span>`;
-  }
-  $("adMuse").hidden = a.notes_ready && !flag;
-  const acts = flag && flag.picture ? `<button class="btn dark" data-act="draft" data-ad="${esc(flag.id)}">Draft a new ${esc(flag.name.split(" ")[0].toLowerCase())} ad picture</button><a class="btn" style="display:inline-flex;align-items:center" href="${withKey("/board")}">See the chats</a>` : "";
-  if (!drafting && $("adActs").dataset.html !== acts) { $("adActs").innerHTML = acts; $("adActs").dataset.html = acts; }  // don't swap a button under a finger
+async function load() {
+  try { render(await api("/api/brief")); } catch (e) { toast("Can't reach the desk right now."); }
 }
-
-async function load() { try { render(await api("/api/brief")); } catch (e) { $("headline").textContent = "Can't reach the desk right now."; } }
 
 document.addEventListener("click", async (e) => {
   const b = e.target.closest("button[data-act]");
   if (!b) return;
   b.disabled = true;
-  const { act, order, alert, customer } = b.dataset;
-  if (act === "draft") {
-    drafting = true;
-    const label = b.textContent;
-    b.textContent = "Muse is drawing it…";
-    try {
-      const r = await api(`/api/ads/${b.dataset.ad}/picture`, {});
-      $("adDraft").innerHTML = `<img alt="Draft ad picture" src="${withKey(r.url)}"><a class="btn" style="display:inline-flex;align-items:center" download href="${withKey(r.url)}">Save picture</a>`;
-    } catch (err) { toast("Muse couldn't draw it. Try again."); }
-    drafting = false;
-    b.disabled = false;
-    b.textContent = label;
-    load();
-    return;
-  }
+  const { act, order, customer } = b.dataset;
   try {
-    if (act === "confirm") { await api(`/api/order/${order}/confirm`, {}); toast("Confirmed. The customer has been told."); }
-    if (act === "notseen") { await api(`/api/order/${order}/not-seen`, {}); toast("The robot told them it hasn't landed yet."); }
-    if (act === "alertok") { await api(`/api/alert/${alert}/confirm`, {}); toast("Confirmed. The customer has been told."); }
-    if (act === "alertno") { await api(`/api/alert/${alert}/dismiss`, {}); toast("Dismissed."); }
-    if (act === "robot") { await api(`/api/customer/${customer}/robot`, {}); toast("The robot is handling it."); }
+    if (act === "approve") { await api(`/api/order/${order}/approve`, {}); toast("Approved. The PayPal link is on its way to the customer."); }
+    if (act === "robot") { await api(`/api/customer/${customer}/robot`, {}); toast("The robot has this chat."); }
     if (act === "skip") { await api(`/api/order/${order}/skip`, { skip: b.dataset.skip === "1" }); }
   } catch (err) { toast("That didn't work. Try again."); }
   load();
-});
-
-function asked(r) {
-  $("askOut").hidden = false;
-  $("askQ").textContent = r.question ? `You asked: "${r.question}"` : "";
-  $("askA").textContent = r.answer;
-  if ("speechSynthesis" in window) { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(r.answer); u.rate = 1; speechSynthesis.speak(u); }
-}
-async function ask(body) {
-  $("askOut").hidden = false; $("askQ").textContent = ""; $("askA").textContent = "Thinking…";
-  try {
-    const r = await fetch(withKey("/api/ask"), body instanceof FormData ? { method: "POST", body } :
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || r.status);
-    asked(d);
-  } catch (e) { $("askA").textContent = e.message && isNaN(e.message) ? e.message : "The desk didn't answer. Try again."; }
-}
-$("askForm").addEventListener("submit", (e) => {
-  e.preventDefault();
-  const t = $("askText").value.trim();
-  if (t) { ask({ text: t }); $("askText").value = ""; }
-});
-let askRec = null;
-$("askMic").addEventListener("click", async () => {
-  if (askRec) { askRec.stop(); return; }
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const chunks = [];
-    askRec = new MediaRecorder(stream);
-    askRec.ondataavailable = (e) => chunks.push(e.data);
-    askRec.onstop = () => {
-      stream.getTracks().forEach((t) => t.stop());
-      askRec = null;
-      $("askMic").classList.remove("rec"); $("askMic").setAttribute("aria-label", "Ask by voice");
-      const fd = new FormData();
-      fd.append("file", new Blob(chunks, { type: chunks[0]?.type || "audio/webm" }), "ask.webm");
-      ask(fd);
-    };
-    askRec.start();
-    $("askMic").classList.add("rec"); $("askMic").setAttribute("aria-label", "Stop and ask");
-    $("askOut").hidden = false; $("askQ").textContent = ""; $("askA").textContent = "Listening…";
-  } catch (e) { toast("The browser didn't allow the microphone."); }
 });
 
 fetch(withKey("/phone"), { method: "HEAD" }).then((r) => { if (!r.ok) $("phoneLink").remove(); }).catch(() => $("phoneLink").remove());

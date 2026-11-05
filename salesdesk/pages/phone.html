@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Demo phone · Sales Desk</title>
+<title>Demo phone · Sales Desk Pay</title>
 <link rel="stylesheet" href="/app.css">
 <style>
 .phone { width: 100%; max-width: 400px; border-radius: 32px; background: var(--ink); padding: 12px; }
@@ -37,7 +37,7 @@
   <div class="row" style="gap:28px">
     <div class="phone" aria-label="Customer phone">
       <div class="screen">
-        <div class="bar"><span class="dot" id="chDot"></span><b id="shopName">Nkem Fabrics</b><span class="meta" id="chName" style="margin-left:auto"></span></div>
+        <div class="bar"><span class="dot" id="chDot"></span><b id="shopName">Zuri Cloth</b><span class="meta" id="chName" style="margin-left:auto"></span></div>
         <div class="msgs" id="msgs"><span class="meta" style="align-self:center">Say hello, or ask for a fabric.</span></div>
         <form class="compose" id="compose">
           <label class="sr" for="text">Message</label>
@@ -52,7 +52,6 @@
         <h2 style="font-size:20px">Be a customer</h2>
         <div class="seg" id="channels" role="group" aria-label="Channel"></div>
         <label class="field">Your name<input id="name" value="Chidinma"></label>
-        <label class="field">Came from<select id="ad"><option value="">No ad</option></select></label>
         <div class="acts">
           <button class="btn" type="button" id="voice">Record a voice note</button>
           <label class="btn" style="display:inline-flex;align-items:center;cursor:pointer">Send a photo<input type="file" id="photo" accept="image/*" class="sr"></label>
@@ -61,18 +60,24 @@
       </section>
 
       <section class="panel" id="ownerPanel" hidden>
-        <h2 style="font-size:20px">Sent to Nkem</h2>
+        <h2 style="font-size:20px">Sent to Folake</h2>
         <div id="ownerNotes" style="display:flex;flex-direction:column;gap:8px;font-size:14px;color:var(--ink-2)"></div>
       </section>
 
       <section class="panel">
-        <h2 style="font-size:20px">Test bank alert</h2>
-        <span class="meta">Pretend your bank emailed a credit alert. A signed alert that matches one order is confirmed by itself.</span>
-        <label class="field">Amount (₦)<input id="amount" inputmode="numeric" placeholder="38500"></label>
-        <label class="field">Sender name on the alert<input id="sender" placeholder="CHIDINMA OBI"></label>
-        <label class="field">Transfer description<input id="narration" placeholder="NF-12"></label>
-        <label style="display:flex;align-items:center;gap:8px;font-size:14px"><input type="checkbox" id="signed" checked style="width:20px;height:20px"> Signed by the bank (passes the email checks)</label>
-        <div class="acts"><button class="btn green" type="button" id="sendAlert">Send test alert</button><button class="btn" type="button" id="asReceipt">Send as a receipt photo</button></div>
+        <h2 style="font-size:20px">Try to fake a payment</h2>
+        <span class="meta">Make an order and get its PayPal link first. Then try these: the order must stay "Awaiting PayPal" on the board.</span>
+        <label class="field">Forged PayPal message<select id="forgeKind">
+          <option value="unsigned">No PayPal signature</option>
+          <option value="bad_signature">Made-up signature</option>
+          <option value="wrong_key">Signed with the wrong key</option>
+          <option value="tampered_amount">Real £1 message edited to the full price</option>
+          <option value="tampered_order">Another order's message, edited</option>
+        </select></label>
+        <div class="acts"><button class="btn" type="button" id="forge">Send forged PayPal message</button>
+        <button class="btn" type="button" id="asReceipt">Send a fake PayPal receipt photo</button>
+        <button class="btn" type="button" id="claim">Just say "I've paid"</button></div>
+        <span class="meta" id="forgeResult"></span>
       </section>
 
       <section class="panel">
@@ -122,18 +127,17 @@ function start() {
   if (!firstMsg) return;
   $("msgs").innerHTML = "";
   firstMsg = false;
-  const ad = $("ad").selectedOptions[0];
-  if (ad && ad.value) $("msgs").insertAdjacentHTML("beforeend", `<div class="adref"><span class="meta">From an ad</span><b>${esc(ad.textContent)}</b></div>`);
 }
+const linkify = (t) => esc(t).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener" style="word-break:break-all">$1</a>');
 function add(who, text, html) {
   start();
-  $("msgs").insertAdjacentHTML("beforeend", `<div class="msg ${who}"><div class="bub">${html || esc(text)}</div></div>`);
+  $("msgs").insertAdjacentHTML("beforeend", `<div class="msg ${who}"><div class="bub">${html || linkify(text)}</div></div>`);
   $("msgs").scrollTop = $("msgs").scrollHeight;
 }
 async function send(text) {
   add("customer", text);
   try {
-    const r = await api("/api/demo/message", { channel, address: phoneId, name: $("name").value, text, ad: $("ad").value });
+    const r = await api("/api/demo/message", { channel, address: phoneId, name: $("name").value, text });
     r.replies.forEach((t) => add("shop", t));
     owner(r);
   } catch (e) { toast("The desk didn't answer. Is it running?"); }
@@ -141,7 +145,7 @@ async function send(text) {
 async function sendMedia(kind, blob, html) {
   add("customer", "", html);
   const f = new FormData();
-  f.append("channel", channel); f.append("address", phoneId); f.append("kind", kind); f.append("ad", $("ad").value);
+  f.append("channel", channel); f.append("address", phoneId); f.append("kind", kind);
   f.append("file", blob, kind === "audio" ? "note.webm" : "photo.png");
   try {
     const r = await fetch(withKey("/api/demo/media"), { method: "POST", body: f });
@@ -178,42 +182,36 @@ $("photo").addEventListener("change", () => {
   $("photo").value = "";
 });
 
-function receiptBlob() {  // a transfer receipt screenshot drawn from the test alert fields
-  const c = document.createElement("canvas"); c.width = 540; c.height = 760;
+function receiptBlob() {  // a fake PayPal "you paid" screenshot, drawn here. It is not real and proves nothing.
+  const c = document.createElement("canvas"); c.width = 540; c.height = 700;
   const g = c.getContext("2d");
-  g.fillStyle = "#fff"; g.fillRect(0, 0, 540, 760);
-  g.fillStyle = "#00A86E"; g.fillRect(0, 0, 540, 110);
-  g.fillStyle = "#fff"; g.font = "600 26px Inter, Arial"; g.fillText("Transfer receipt", 30, 66);
-  const amount = Number(String($("amount").value || "0").replace(/[^\d]/g, ""));
-  g.fillStyle = "#111"; g.font = "700 44px Inter, Arial"; g.fillText("₦" + amount.toLocaleString("en-NG") + ".00", 30, 180);
-  g.fillStyle = "#0B6B45"; g.font = "500 22px Inter, Arial"; g.fillText("Successful", 30, 220);
-  [["Recipient", "NKEM FABRICS"], ["Bank", "Moniepoint MFB"], ["Sender", $("sender").value || "CHIDINMA OBI"],
-   ["Description", $("narration").value || "-"], ["Date", new Date().toLocaleString("en-GB")]].forEach(([k, v], i) => {
-    g.fillStyle = "#777"; g.font = "20px Inter, Arial"; g.fillText(k, 30, 290 + i * 86);
-    g.fillStyle = "#111"; g.font = "500 24px Inter, Arial"; g.fillText(v, 30, 320 + i * 86);
+  g.fillStyle = "#fff"; g.fillRect(0, 0, 540, 700);
+  g.fillStyle = "#003087"; g.fillRect(0, 0, 540, 110);
+  g.fillStyle = "#fff"; g.font = "700 30px Arial"; g.fillText("PayPal", 30, 66);
+  g.fillStyle = "#111"; g.font = "700 44px Arial"; g.fillText("£76.00 GBP", 30, 180);
+  g.fillStyle = "#1a7f37"; g.font = "500 22px Arial"; g.fillText("Payment completed", 30, 220);
+  [["To", "Zuri Cloth"], ["Order note", "ZC-1"], ["From", $("name").value || "Chidinma"], ["Date", new Date().toLocaleString("en-GB")]].forEach(([k, v], i) => {
+    g.fillStyle = "#777"; g.font = "20px Arial"; g.fillText(k, 30, 290 + i * 86);
+    g.fillStyle = "#111"; g.font = "500 24px Arial"; g.fillText(v, 30, 320 + i * 86);
   });
   return new Promise((ok) => c.toBlob((b) => ok([b, c.toDataURL("image/png")]), "image/png"));
 }
 $("asReceipt").addEventListener("click", async () => {
-  if (!$("amount").value) { toast("Enter an amount first."); return; }
   const [blob, url] = await receiptBlob();
   sendMedia("image", blob, `<img alt="Receipt" src="${url}">`);
 });
-api("/api/demo/ads").then((r) => {
-  $("ad").insertAdjacentHTML("beforeend", r.ads.map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join(""));
-  if (!r.senses) ["voice", "asReceipt"].forEach((id) => $(id).title = "Needs META_API_KEY to be understood");
-}).catch(() => {});
+$("claim").addEventListener("click", () => send("I've paid! Please confirm my order."));
+$("forge").addEventListener("click", async () => {
+  try {
+    const r = await api("/api/demo/forge", { channel, address: phoneId, kind: $("forgeKind").value });
+    $("forgeResult").textContent = r.refused ? `PayPal's check said no (HTTP ${r.status}). The order is still "${r.stage}".` : `Accepted as genuine, but the order is still "${r.stage}".`;
+  } catch (e) { toast("Get a PayPal link first: ask for fabric, say yes, then approve it on the board."); }
+});
 function fresh() { phoneId = "p" + Math.random().toString(36).slice(2, 8); firstMsg = true; $("msgs").innerHTML = `<span class="meta" style="align-self:center">Say hello, or ask for a fabric.</span>`; }
 
 $("channels").addEventListener("click", (e) => { const b = e.target.closest("button[data-ch]"); if (!b) return; channel = b.dataset.ch; drawChannels(); fresh(); });
 $("compose").addEventListener("submit", (e) => { e.preventDefault(); const t = $("text").value.trim(); if (!t) return; $("text").value = ""; send(t); });
 $("newCustomer").addEventListener("click", () => { fresh(); toast("New customer: the robot won't know you."); });
-$("sendAlert").addEventListener("click", async () => {
-  try {
-    await api("/api/demo/bank-alert", { amount: $("amount").value, sender: $("sender").value, narration: $("narration").value, verified: $("signed").checked });
-    toast("Alert sent. Watch the phone and the brief.");
-  } catch (e) { toast("Enter an amount first."); }
-});
 $("reset").addEventListener("click", async () => {
   if (!confirm("Reset the demo shop? This clears every chat and order and puts the sample morning back.")) return;
   await api("/api/demo/reset", {}); fresh(); toast("The demo is back to its sample morning.");

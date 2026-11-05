@@ -197,7 +197,11 @@ class Web:
         has to be refused there; the demo shows the order staying 'Awaiting PayPal'."""
         data = await self._body(request)
         kind = str(data.get("kind") or "")
-        order = self.desk.store.get_order(int(data.get("order_id") or 0))
+        if data.get("address"):  # from the demo phone: the order that customer is paying for
+            cust = self.desk.store.customer(str(data.get("channel") or "whatsapp"), self._demo_address(data["address"]), self.desk.now())
+            order = self.desk.store.open_order(cust["id"])
+        else:
+            order = self.desk.store.get_order(int(data.get("order_id") or 0))
         if kind not in forge.KINDS or not order or not order["pp_order_id"] or self.mock is None:
             return web.json_response({"error": "Needs an order with a PayPal link, and the built-in mock PayPal."}, status=400)
         headers, body = forge.forged(kind, self.mock, order["pp_order_id"], self.desk.code(order["id"]),

@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sales-desk-pay",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "salesdesk", "serve"],
+      "port": 8792
+    }
+  ]
+}
