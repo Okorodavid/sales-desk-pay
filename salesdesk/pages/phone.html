@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Demo phone · Sales Desk</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+.phone { width: 100%; max-width: 400px; border-radius: 32px; background: var(--ink); padding: 12px; }
+.screen { border-radius: 24px; background: var(--soft); display: flex; flex-direction: column; height: 620px; overflow: hidden; }
+.bar { display: flex; align-items: center; gap: 10px; padding: 14px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.msgs { flex: 1 1 auto; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 14px; }
+.msgs .msg.customer { align-self: flex-end; align-items: flex-end; }
+.msgs .msg.customer .bub { background: var(--green-soft); border-color: #BFE0CF; }
+.msgs .msg.shop { align-self: flex-start; align-items: flex-start; }
+.msgs .msg.shop .bub { background: var(--panel); color: var(--ink); border-color: var(--line); }
+.compose { display: flex; gap: 8px; padding: 10px; background: var(--panel); border-top: 1px solid var(--line); }
+.compose input { flex: 1 1 auto; min-width: 0; min-height: 44px; padding: 0 14px; border-radius: 22px; border: 1px solid #D6D2C6; }
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.field input, .field select { min-height: 44px; padding: 0 12px; border-radius: 12px; border: 1px solid #D6D2C6; background: var(--panel); color: var(--ink); font-size: 15px; }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: #fff; border-color: var(--ink); }
+.adref { align-self: stretch; display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); border-left: 4px solid #1F5FBF; font-size: 13px; }
+.adref b { font-size: 14px; }
+.msgs .bub img { display: block; max-width: 180px; border-radius: 8px; }
+.btn.rec { background: #B3261E; color: #fff; border-color: #B3261E; }
+</style>
+</head>
+<body>
+<div class="wrap wide">
+  <header class="top">
+    <span class="eyebrow">DEMO PHONE</span>
+    <div class="grow"></div>
+    <nav class="nav"><a data-link href="/">Morning brief</a><a data-link href="/board">Order board</a></nav>
+  </header>
+
+  <div class="row" style="gap:28px">
+    <div class="phone" aria-label="Customer phone">
+      <div class="screen">
+        <div class="bar"><span class="dot" id="chDot"></span><b id="shopName">Nkem Fabrics</b><span class="meta" id="chName" style="margin-left:auto"></span></div>
+        <div class="msgs" id="msgs"><span class="meta" style="align-self:center">Say hello, or ask for a fabric.</span></div>
+        <form class="compose" id="compose">
+          <label class="sr" for="text">Message</label>
+          <input id="text" autocomplete="off" placeholder="Message">
+          <button class="btn dark" style="border-radius:22px">Send</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="side" style="flex:1 1 360px;max-width:520px">
+      <section class="panel">
+        <h2 style="font-size:20px">Be a customer</h2>
+        <div class="seg" id="channels" role="group" aria-label="Channel"></div>
+        <label class="field">Your name<input id="name" value="Chidinma"></label>
+        <label class="field">Came from<select id="ad"><option value="">No ad</option></select></label>
+        <div class="acts">
+          <button class="btn" type="button" id="voice">Record a voice note</button>
+          <label class="btn" style="display:inline-flex;align-items:center;cursor:pointer">Send a photo<input type="file" id="photo" accept="image/*" class="sr"></label>
+          <button class="btn" type="button" id="newCustomer">New customer</button>
+        </div>
+      </section>
+
+      <section class="panel" id="ownerPanel" hidden>
+        <h2 style="font-size:20px">Sent to Nkem</h2>
+        <div id="ownerNotes" style="display:flex;flex-direction:column;gap:8px;font-size:14px;color:var(--ink-2)"></div>
+      </section>
+
+      <section class="panel">
+        <h2 style="font-size:20px">Test bank alert</h2>
+        <span class="meta">Pretend your bank emailed a credit alert. A signed alert that matches one order is confirmed by itself.</span>
+        <label class="field">Amount (₦)<input id="amount" inputmode="numeric" placeholder="38500"></label>
+        <label class="field">Sender name on the alert<input id="sender" placeholder="CHIDINMA OBI"></label>
+        <label class="field">Transfer description<input id="narration" placeholder="NF-12"></label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:14px"><input type="checkbox" id="signed" checked style="width:20px;height:20px"> Signed by the bank (passes the email checks)</label>
+        <div class="acts"><button class="btn green" type="button" id="sendAlert">Send test alert</button><button class="btn" type="button" id="asReceipt">Send as a receipt photo</button></div>
+      </section>
+
+      <section class="panel">
+        <h2 style="font-size:20px">Start again</h2>
+        <span class="meta">Puts the demo shop back to its sample morning.</span>
+        <div class="acts"><button class="btn" type="button" id="reset">Reset the demo</button></div>
+      </section>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+const K = new URLSearchParams(location.search).get("k");
+const withKey = (p) => K ? p + (p.includes("?") ? "&" : "?") + "k=" + encodeURIComponent(K) : p;
+document.querySelectorAll("[data-link]").forEach((a) => a.href = withKey(a.getAttribute("href")));
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const $ = (id) => document.getElementById(id);
+const CH = [["whatsapp", "WhatsApp"], ["instagram", "Instagram"], ["tiktok", "TikTok"], ["email", "Email"]];
+let channel = "whatsapp";
+let phoneId = "p" + Math.random().toString(36).slice(2, 8);
+let firstMsg = true;
+
+async function api(path, body) {
+  const r = await fetch(withKey(path), body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+function toast(text) { const t = $("toast"); t.textContent = text; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 2400); }
+
+function drawChannels() {
+  $("channels").innerHTML = CH.map(([k, n]) => `<button type="button" class="btn" data-ch="${k}" aria-pressed="${k === channel}">${n}</button>`).join("");
+  $("chDot").className = "dot " + channel;
+  $("chName").textContent = CH.find((c) => c[0] === channel)[1];
+}
+let seenNotes = null;
+function owner(r) {  // the owner's Telegram, shown beside the phone. Only notes from after this page opened.
+  if (!r || r.owner_n === undefined) return;
+  if (seenNotes === null) { seenNotes = r.owner_n; return; }
+  const fresh = r.owner.slice(Math.max(0, r.owner.length - (r.owner_n - seenNotes)));
+  seenNotes = r.owner_n;
+  if (!fresh.length) return;
+  $("ownerPanel").hidden = false;
+  $("ownerNotes").innerHTML = fresh.slice(-2).map((n) => `<div class="need" style="padding:12px">${esc(n.split("\n")[0])}</div>`).join("");
+}
+function start() {
+  if (!firstMsg) return;
+  $("msgs").innerHTML = "";
+  firstMsg = false;
+  const ad = $("ad").selectedOptions[0];
+  if (ad && ad.value) $("msgs").insertAdjacentHTML("beforeend", `<div class="adref"><span class="meta">From an ad</span><b>${esc(ad.textContent)}</b></div>`);
+}
+function add(who, text, html) {
+  start();
+  $("msgs").insertAdjacentHTML("beforeend", `<div class="msg ${who}"><div class="bub">${html || esc(text)}</div></div>`);
+  $("msgs").scrollTop = $("msgs").scrollHeight;
+}
+async function send(text) {
+  add("customer", text);
+  try {
+    const r = await api("/api/demo/message", { channel, address: phoneId, name: $("name").value, text, ad: $("ad").value });
+    r.replies.forEach((t) => add("shop", t));
+    owner(r);
+  } catch (e) { toast("The desk didn't answer. Is it running?"); }
+}
+async function sendMedia(kind, blob, html) {
+  add("customer", "", html);
+  const f = new FormData();
+  f.append("channel", channel); f.append("address", phoneId); f.append("kind", kind); f.append("ad", $("ad").value);
+  f.append("file", blob, kind === "audio" ? "note.webm" : "photo.png");
+  try {
+    const r = await fetch(withKey("/api/demo/media"), { method: "POST", body: f });
+    if (!r.ok) throw new Error(r.status);
+    const data = await r.json();
+    data.replies.forEach((t) => add("shop", t));
+    owner(data);
+  } catch (e) { toast("The desk didn't answer. Is it running?"); }
+}
+
+let rec = null;
+$("voice").addEventListener("click", async () => {
+  if (rec) { rec.stop(); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const chunks = [], began = Date.now();
+    rec = new MediaRecorder(stream);
+    rec.ondataavailable = (e) => chunks.push(e.data);
+    rec.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      rec = null;
+      $("voice").textContent = "Record a voice note"; $("voice").classList.remove("rec");
+      const secs = Math.max(1, Math.round((Date.now() - began) / 1000));
+      sendMedia("audio", new Blob(chunks, { type: chunks[0]?.type || "audio/webm" }), `🎤 Voice note · 0:${String(secs).padStart(2, "0")}`);
+    };
+    rec.start();
+    $("voice").textContent = "Stop and send"; $("voice").classList.add("rec");
+  } catch (e) { toast("The browser didn't allow the microphone."); }
+});
+$("photo").addEventListener("change", () => {
+  const file = $("photo").files[0];
+  if (!file) return;
+  sendMedia("image", file, `<img alt="Photo" src="${URL.createObjectURL(file)}">`);
+  $("photo").value = "";
+});
+
+function receiptBlob() {  // a transfer receipt screenshot drawn from the test alert fields
+  const c = document.createElement("canvas"); c.width = 540; c.height = 760;
+  const g = c.getContext("2d");
+  g.fillStyle = "#fff"; g.fillRect(0, 0, 540, 760);
+  g.fillStyle = "#00A86E"; g.fillRect(0, 0, 540, 110);
+  g.fillStyle = "#fff"; g.font = "600 26px Inter, Arial"; g.fillText("Transfer receipt", 30, 66);
+  const amount = Number(String($("amount").value || "0").replace(/[^\d]/g, ""));
+  g.fillStyle = "#111"; g.font = "700 44px Inter, Arial"; g.fillText("₦" + amount.toLocaleString("en-NG") + ".00", 30, 180);
+  g.fillStyle = "#0B6B45"; g.font = "500 22px Inter, Arial"; g.fillText("Successful", 30, 220);
+  [["Recipient", "NKEM FABRICS"], ["Bank", "Moniepoint MFB"], ["Sender", $("sender").value || "CHIDINMA OBI"],
+   ["Description", $("narration").value || "-"], ["Date", new Date().toLocaleString("en-GB")]].forEach(([k, v], i) => {
+    g.fillStyle = "#777"; g.font = "20px Inter, Arial"; g.fillText(k, 30, 290 + i * 86);
+    g.fillStyle = "#111"; g.font = "500 24px Inter, Arial"; g.fillText(v, 30, 320 + i * 86);
+  });
+  return new Promise((ok) => c.toBlob((b) => ok([b, c.toDataURL("image/png")]), "image/png"));
+}
+$("asReceipt").addEventListener("click", async () => {
+  if (!$("amount").value) { toast("Enter an amount first."); return; }
+  const [blob, url] = await receiptBlob();
+  sendMedia("image", blob, `<img alt="Receipt" src="${url}">`);
+});
+api("/api/demo/ads").then((r) => {
+  $("ad").insertAdjacentHTML("beforeend", r.ads.map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join(""));
+  if (!r.senses) ["voice", "asReceipt"].forEach((id) => $(id).title = "Needs META_API_KEY to be understood");
+}).catch(() => {});
+function fresh() { phoneId = "p" + Math.random().toString(36).slice(2, 8); firstMsg = true; $("msgs").innerHTML = `<span class="meta" style="align-self:center">Say hello, or ask for a fabric.</span>`; }
+
+$("channels").addEventListener("click", (e) => { const b = e.target.closest("button[data-ch]"); if (!b) return; channel = b.dataset.ch; drawChannels(); fresh(); });
+$("compose").addEventListener("submit", (e) => { e.preventDefault(); const t = $("text").value.trim(); if (!t) return; $("text").value = ""; send(t); });
+$("newCustomer").addEventListener("click", () => { fresh(); toast("New customer: the robot won't know you."); });
+$("sendAlert").addEventListener("click", async () => {
+  try {
+    await api("/api/demo/bank-alert", { amount: $("amount").value, sender: $("sender").value, narration: $("narration").value, verified: $("signed").checked });
+    toast("Alert sent. Watch the phone and the brief.");
+  } catch (e) { toast("Enter an amount first."); }
+});
+$("reset").addEventListener("click", async () => {
+  if (!confirm("Reset the demo shop? This clears every chat and order and puts the sample morning back.")) return;
+  await api("/api/demo/reset", {}); fresh(); toast("The demo is back to its sample morning.");
+});
+
+setInterval(async () => {  // replies the owner sends from the board, payment confirmations, follow-ups
+  try { const r = await api(`/api/demo/inbox?channel=${channel}&address=${phoneId}`); r.replies.forEach((t) => add("shop", t)); owner(r); } catch (e) {}
+}, 2000);
+drawChannels();
+</script>
+</body>
+</html>

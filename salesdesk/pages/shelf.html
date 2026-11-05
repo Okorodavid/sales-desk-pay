@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shelf camera · Sales Desk</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <span class="eyebrow" id="where">SHELF CAMERA</span>
+    <div class="grow"></div>
+    <nav class="nav"><a data-link href="/">Morning brief</a><a data-link href="/board">Order board</a></nav>
+  </header>
+
+  <h1 class="big" id="hello" style="font-size:52px;line-height:1.02;margin:0">No snapshot yet.</h1>
+
+  <div class="shelf-row">
+    <section style="display:flex;flex-direction:column;gap:12px" aria-label="Camera">
+      <div class="cam" id="cam">
+        <div class="cam-empty" id="camEmpty">
+          <button class="btn dark" id="snap">Take a snapshot</button>
+        </div>
+        <img id="frame" alt="Shelf camera frame" hidden>
+        <div id="marks"></div>
+        <span class="cam-tag" id="camTag" hidden></span>
+      </div>
+      <div class="acts">
+        <button class="btn dark" id="snap2" hidden>Take a snapshot</button>
+        <label class="btn" style="display:inline-flex;align-items:center;cursor:pointer">Upload a photo<input type="file" id="upload" accept="image/*" hidden></label>
+      </div>
+    </section>
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div class="need" id="gap" hidden></div>
+      <section class="panel" aria-label="Today">
+        <h2 style="font-size:20px">Today</h2>
+        <div id="log"><span class="meta">No snapshots yet.</span></div>
+      </section>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+const K = new URLSearchParams(location.search).get("k");
+const withKey = (p) => K ? p + (p.includes("?") ? "&" : "?") + "k=" + encodeURIComponent(K) : p;
+document.querySelectorAll("[data-link]").forEach((a) => a.href = withKey(a.getAttribute("href")));
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const $ = (id) => document.getElementById(id);
+function toast(text) { const t = $("toast"); t.textContent = text; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 2200); }
+
+function render(r) {
+  $("where").textContent = r.name.toUpperCase();
+  const l = r.latest;
+  if (!l) return;
+  $("hello").textContent = `${l.count} ${l.count === 1 ? r.piece : r.piece + "s"} on the shelf.`;
+  $("camEmpty").hidden = true; $("snap2").hidden = false;
+  $("frame").hidden = false;
+  if ($("frame").getAttribute("src") !== withKey(l.image)) $("frame").src = withKey(l.image);
+  $("camTag").hidden = false; $("camTag").textContent = `CAM 1 · ${l.time}`;
+  $("marks").innerHTML = l.boxes.map((b, i) =>
+    `<span class="mark" style="left:${b[0] * 100}%;top:${b[1] * 100}%;width:${(b[2] - b[0]) * 100}%;height:${(b[3] - b[1]) * 100}%;animation-delay:${i * 70}ms"><b>${i + 1}</b></span>`).join("");
+  $("log").innerHTML = r.log.slice().reverse().map((s) =>
+    `<div class="line"><span class="when">${esc(s.time)}</span><span class="who"><b>${s.count} on the shelf</b>${s.taken ? `<span>${s.taken} taken</span>` : ""}</span></div>`).join("");
+  const g = r.gap;
+  $("gap").hidden = !g || !g.unsold;
+  if (g && g.unsold) {
+    $("gap").innerHTML = `<div class="txt"><span class="meta">Since ${esc(g.since)}</span><span class="title">${g.taken} left the shelf. ${g.sold ? `${g.sold} paid for in chats.` : "None paid for in chats."}</span><span class="detail">Check the shop floor before you restock.</span></div><div class="acts"><a class="btn" style="display:inline-flex;align-items:center" href="${withKey("/board")}">See the orders</a></div>`;
+  }
+}
+
+let busy = false, sampleNext = "before";
+async function snap(body) {
+  if (busy) return;
+  busy = true;
+  document.querySelectorAll("#snap,#snap2").forEach((b) => { b.disabled = true; b.textContent = "Counting…"; });
+  try {
+    const r = await fetch(withKey("/api/shelf/snap"), body instanceof FormData ? { method: "POST", body } :
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || r.status);
+    render(d);
+  } catch (e) { toast(e.message && isNaN(e.message) ? e.message : "The camera didn't answer. Try again."); }
+  busy = false;
+  document.querySelectorAll("#snap,#snap2").forEach((b) => { b.disabled = false; b.textContent = "Take a snapshot"; });
+}
+const sample = () => { const s = sampleNext; sampleNext = "after"; snap({ sample: s }); };
+$("snap").addEventListener("click", sample);
+$("snap2").addEventListener("click", sample);
+$("upload").addEventListener("change", () => {
+  const f = $("upload").files[0];
+  if (!f) return;
+  const fd = new FormData(); fd.append("file", f); snap(fd); $("upload").value = "";
+});
+fetch(withKey("/api/shelf")).then((r) => r.json()).then((r) => { if (r.latest) { sampleNext = "after"; render(r); } }).catch(() => {});
+</script>
+</body>
+</html>

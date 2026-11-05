@@ -1,0 +1,10 @@
+.env
+*.db
+*.db-journal
+__pycache__/
+.pytest_cache/
+*.eml
+ad-drafts/
+video/out/
+video/voice-cache/
+WHATSAPP-TEST.txt

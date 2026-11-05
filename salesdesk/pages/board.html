@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Order board · Sales Desk</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="wrap wide">
+  <header class="top" style="align-items:flex-end">
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <span class="eyebrow" id="shop"></span>
+      <h1 style="font-size:34px">Every chat is an order on its way</h1>
+    </div>
+    <div class="grow"></div>
+    <div id="totals" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+    <nav class="nav" style="width:100%"><a data-link href="/">Morning brief</a><a data-link href="/phone" id="phoneLink">Demo phone</a></nav>
+  </header>
+
+  <div class="row">
+    <div class="board-scroll"><div class="cols" id="cols"></div></div>
+    <aside class="drawer" id="drawer" aria-label="Chat">
+      <span class="meta">Pick a card to see the chat.</span>
+    </aside>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const K = params.get("k");
+const withKey = (p) => K ? p + (p.includes("?") ? "&" : "?") + "k=" + encodeURIComponent(K) : p;
+document.querySelectorAll("[data-link]").forEach((a) => a.href = withKey(a.getAttribute("href")));
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const $ = (id) => document.getElementById(id);
+let selected = Number(params.get("c")) || null;
+let draft = "";
+
+async function api(path, body) {
+  const r = await fetch(withKey(path), body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+function toast(text) { const t = $("toast"); t.textContent = text; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 2200); }
+
+function renderBoard(b) {
+  $("shop").textContent = b.shop.toUpperCase();
+  $("totals").innerHTML = b.totals.map((t) => `<span class="tile" style="padding:10px 14px;gap:0;border-radius:14px"><span style="font-size:12px">${esc(t.k)}</span><b style="font-size:20px">${esc(t.v)}</b></span>`).join("");
+  $("cols").innerHTML = b.columns.map((col) => `<section class="col"><h2>${esc(col.title)} <span>${col.cards.length}</span></h2>${col.cards.map((c) => `
+    <button type="button" class="card ${c.customer_id === selected ? "on" : ""}" data-customer="${c.customer_id}">
+      <span class="meta" style="display:flex;align-items:center;gap:6px"><span class="dot ${esc(c.channel_key)}"></span>${esc(c.channel)} · ${esc(c.code)}</span>
+      <span class="nm">${esc(c.name)}</span><span class="wt">${esc(c.what)}</span>
+      ${c.amount ? `<span class="amt">${esc(c.amount)}</span>` : ""}
+      <span class="chip ${c.yours ? "you" : ""}">${esc(c.next)}</span>
+    </button>`).join("")}</section>`).join("");
+}
+
+function renderChat(c) {
+  const o = c.order;
+  let acts = "";
+  if (o && o.stage === "awaiting_payment") acts += `<button class="btn green" data-act="confirm" data-order="${o.id}">Money is in</button>${o.says_paid ? `<button class="btn" data-act="notseen" data-order="${o.id}">Not yet</button>` : ""}`;
+  if (o && o.stage === "quoted") acts += `<button class="btn green" data-act="confirm" data-order="${o.id}">Money is in</button>`;
+  if (o && o.stage === "paid") acts += `<button class="btn dark" data-act="delivered" data-order="${o.id}">Mark delivered</button>`;
+  const paidNote = o && o.paid_by === "bank_alert" ? `<span class="chip ok">Confirmed from a bank alert</span>` : "";
+  $("drawer").innerHTML = `
+    <div style="display:flex;flex-wrap:wrap;align-items:flex-start;gap:10px">
+      <div style="display:flex;flex-direction:column;gap:3px;flex:1 1 160px">
+        <span class="meta">${esc(c.channel)}${o ? " · " + esc(o.code) : ""}</span>
+        <h2 style="font-size:24px">${esc(c.name)}</h2>
+        ${o ? `<span style="font-size:14px;color:var(--ink-2)">${esc(o.what)}${o.total ? " · " + esc(o.total) : ""}</span>` : ""}
+      </div>
+      <button class="btn ${c.owner_mode ? "dark" : ""}" data-act="takeover" data-on="${c.owner_mode ? 0 : 1}">${c.owner_mode ? "Give back to robot" : "Take over"}</button>
+    </div>
+    ${paidNote}
+    <div class="thread" id="thread">${c.messages.map((m) => `<div class="msg ${m.who}"><span class="meta">${m.who === "customer" ? "Customer" : m.who === "robot" ? "Sales robot" : "You"} · ${esc(m.when)}</span><div class="bub">${esc(m.text)}</div></div>`).join("")}</div>
+    ${acts ? `<div class="acts">${acts}</div>` : ""}
+    <form class="reply" id="replyForm">
+      <label class="sr" for="replyText">Reply</label>
+      <input id="replyText" autocomplete="off" placeholder="${c.opted_out ? "They opted out of messages" : c.owner_mode ? "Type your reply" : "Type to take over and reply"}" ${c.opted_out ? "disabled" : ""}>
+      <button class="btn dark" ${c.opted_out ? "disabled" : ""}>Send</button>
+    </form>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <span class="meta" style="font-weight:600;letter-spacing:.04em">WHAT THE ROBOT REMEMBERS</span>
+      <div class="facts">${c.memory.map((f) => `<div class="fact"><span>${esc(f.k)}</span>${esc(f.v)}</div>`).join("")}</div>
+    </div>
+    ${c.next ? `<div style="padding:12px;border-radius:12px;background:var(--ground)"><span class="meta">Next step</span><div style="font-weight:600">${esc(c.next)}</div></div>` : ""}`;
+  const input = $("replyText");
+  input.value = draft;
+  input.addEventListener("input", () => draft = input.value);
+  const t = $("thread");
+  t.scrollTop = t.scrollHeight;
+}
+
+async function load() {
+  try {
+    renderBoard(await api("/api/board"));
+    if (selected && document.activeElement?.id !== "replyText") renderChat(await api(`/api/chat/${selected}`));
+  } catch (e) { toast("Can't reach the desk right now."); }
+}
+
+document.addEventListener("click", async (e) => {
+  const card = e.target.closest("button.card");
+  if (card) { selected = Number(card.dataset.customer); draft = ""; history.replaceState(null, "", withKey("/board?c=" + selected)); load(); return; }
+  const b = e.target.closest("button[data-act]");
+  if (!b) return;
+  b.disabled = true;
+  const { act, order } = b.dataset;
+  try {
+    if (act === "confirm") { await api(`/api/order/${order}/confirm`, {}); toast("Confirmed. The customer has been told."); }
+    if (act === "notseen") { await api(`/api/order/${order}/not-seen`, {}); toast("The robot told them it hasn't landed yet."); }
+    if (act === "delivered") { await api(`/api/order/${order}/delivered`, {}); toast("Marked delivered."); }
+    if (act === "takeover") { await api(`/api/customer/${selected}/takeover`, { on: b.dataset.on === "1" }); toast(b.dataset.on === "1" ? "You have this chat. The robot stays quiet." : "The robot is back on this chat."); }
+  } catch (err) { toast("That didn't work. Try again."); }
+  load();
+});
+
+document.addEventListener("submit", async (e) => {
+  if (e.target.id !== "replyForm") return;
+  e.preventDefault();
+  const text = $("replyText").value.trim();
+  if (!text) return;
+  try {
+    const r = await api(`/api/customer/${selected}/reply`, { text });
+    draft = "";
+    toast(r.sent ? "Sent. You've taken over this chat." : "Couldn't send.");
+    $("replyText").blur();
+  } catch (err) { toast("Couldn't send."); }
+  load();
+});
+
+fetch(withKey("/phone"), { method: "HEAD" }).then((r) => { if (!r.ok) $("phoneLink").remove(); }).catch(() => $("phoneLink").remove());
+load();
+setInterval(load, 4000);
+</script>
+</body>
+</html>
