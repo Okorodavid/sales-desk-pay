@@ -9,7 +9,7 @@ Deadline: Thu 12 Nov, 21:00 Lagos. Claude never creates accounts or types keys. 
 3. Go to **Apps & Credentials** and press **Create App**.
    - Name: `sales-desk-pay`.
    - Type: **Merchant**. Do **not** pick "Platform" (it is limited to a few countries).
-4. If the app is created, you will see a **Client ID** and a **Secret**. Copy them into a new file `sales-desk-pay\.env` (copy `.env.example` first):
+4. If the app is created, you will see a **Client ID** and a **Secret**. Open the file `sales-desk-pay\.env` (it already exists) and fill in these two lines:
 
    ```
    PAYPAL_CLIENT_ID=paste here
@@ -18,7 +18,8 @@ Deadline: Thu 12 Nov, 21:00 Lagos. Claude never creates accounts or types keys. 
 
    Paste them into the file only. Do not paste them into the chat.
 5. Go to **Testing tools > Sandbox accounts**. PayPal makes one business account (the shop) and one personal account (the buyer). Open the personal one (**...** > **View/Edit account**) and copy its email and password into a note. The README needs them so judges can pay.
-6. **If step 3 fails** (an error, a country block, or no Create App button): stop and tell Claude exactly what the page says. You then decide whether to skip this contest. The build carries on with a mock PayPal meanwhile.
+6. **Check the shop account's country.** The demo shop sells in pounds. Open the business sandbox account (the one the app uses) and look at its country. If it is not **United Kingdom**, create a new business sandbox account with country United Kingdom and currency GBP, and make sure the app uses it. Claude could not confirm this from the docs; the first Approve will show if PayPal refuses the pounds order, and then you tell Claude the exact message.
+7. **If step 3 fails** (an error, a country block, or no Create App button): stop and tell Claude exactly what the page says. You then decide whether to skip this contest. The build carries on with a mock PayPal meanwhile.
 
 ## 2. The webhook (after step 1 works)
 
