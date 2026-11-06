@@ -24,6 +24,7 @@ log = logging.getLogger("salesdesk.serve")
 
 
 async def serve(settings: Settings) -> None:
+    settings.check_paypal()
     store = Store(settings.db_path)
     shop = load_shop(settings.shop_dir)
     paypal = PayPalClient.from_settings(settings)

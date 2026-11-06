@@ -280,3 +280,22 @@ def test_forged_receipt_evaluation_confirms_nothing_but_the_control_confirms(tmp
     assert {r.group for r in result.rows} == {"A words", "B screenshot", "C webhook"}
     assert (tmp_path / "EVAL.md").read_text(encoding="utf-8").startswith("# Forged-receipt evaluation")
     assert len(list((tmp_path / "pics").glob("*.png"))) == 10
+
+
+# Review pass (6 Nov): two fixes, each with a test that failed on the old code -------------------------------
+
+@stack_test
+async def test_two_approvals_at_once_make_one_link_and_one_message(st):
+    order = await st.quote_and_accept("ada")
+    first, second = await asyncio.gather(st.desk.approve_payment(order["id"]), st.desk.approve_payment(order["id"]))
+    assert len(first.replies) + len(second.replies) == 1
+    assert len(st.mock.orders) == 1
+
+
+def test_live_mode_refuses_to_run_on_the_mock():
+    from salesdesk.config import Settings
+
+    with pytest.raises(ValueError, match="PAYPAL_CLIENT_ID"):
+        Settings(paypal_env="live").check_paypal()
+    Settings(paypal_env="sandbox").check_paypal()  # the mock is fine for sandbox and demos
+    Settings(paypal_env="live", paypal_client_id="id", paypal_secret="s").check_paypal()

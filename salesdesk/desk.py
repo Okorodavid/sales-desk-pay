@@ -69,6 +69,7 @@ class Desk:
         self.tz = ZoneInfo(settings.timezone)
         self.clock = clock or (lambda: datetime.now(self.tz))
         self._summary_day = ""
+        self._approving: set[int] = set()
 
     def now(self) -> datetime:
         return self.clock().astimezone(self.tz)
@@ -341,8 +342,16 @@ class Desk:
         """The owner approves the order: make the PayPal link and send it to the customer."""
         out = Outcome()
         order = self.store.get_order(order_id)
-        if not order or order["stage"] != "approval" or self.paypal is None:
+        if not order or order["stage"] != "approval" or self.paypal is None or order_id in self._approving:
             return out
+        self._approving.add(order_id)  # a second click while PayPal is answering must not send a second link
+        try:
+            return await self._make_link(out, order)
+        finally:
+            self._approving.discard(order_id)
+
+    async def _make_link(self, out: Outcome, order) -> Outcome:
+        order_id = order["id"]
         cust = self.store.get_customer(order["customer_id"])
         code = self.code(order_id)
         items = self.store.items(order)

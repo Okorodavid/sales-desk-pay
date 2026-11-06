@@ -92,6 +92,11 @@ class Settings:
     paypal_env: str = "sandbox"  # sandbox | live
     public_url: str = ""  # where PayPal and the buyer's browser reach this server (a tunnel or the Render address)
 
+    def check_paypal(self) -> None:
+        """Live money must never run on the built-in mock, which lets anyone press 'pay'."""
+        if self.paypal_env == "live" and self.paypal_mock:
+            raise ValueError("PAYPAL_ENV=live needs PAYPAL_CLIENT_ID and PAYPAL_SECRET; the mock PayPal is for demos only")
+
     @property
     def paypal_mock(self) -> bool:
         return not (self.paypal_client_id and self.paypal_secret)
