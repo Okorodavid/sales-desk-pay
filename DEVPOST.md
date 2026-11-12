@@ -24,7 +24,7 @@ A sales robot that sends PayPal links and only marks an order Paid when PayPal's
 
 **What was built in the contest window.** Sales Desk (github.com/Okorodavid/sales-desk, MIT) was built on 27 Oct to 4 Nov 2026 for another hackathon. Sales Desk Pay starts from a copy of it on 5 Nov. The first git commit is that copy. Everything after it is new for this contest: the PayPal client, the webhook verifier and event checks, the owner-approval gate, the mock PayPal, the forged-receipt evaluation and forgery kit, the AG Grid board, the GBP demo shop. The README has a table of what was copied, what changed and what was removed.
 
-**Honest limits.** Wallet payments only. No refunds or disputes yet. The offline demo runs on a built-in mock PayPal (clearly labelled MOCK); the live sandbox run is shown in the video only if the owner has run it (edit this line before submitting).
+**Honest limits.** Wallet payments only. No refunds or disputes yet. The offline demo runs on a built-in mock PayPal (clearly labelled MOCK); an actual sandbox payment passed end to end on 12 Nov: GBP 28, verified completed-capture webhook, Paid status and buyer confirmation. The video still needs recording.
 
 ## Built with
 Python, aiohttp, SQLite, PayPal REST APIs (Orders v2, Webhooks verify), AG Grid Community, Claude / Gemini / Muse Spark, Pillow.

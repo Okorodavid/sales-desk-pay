@@ -64,7 +64,7 @@ With `PAYPAL_CLIENT_ID` and `PAYPAL_SECRET` empty, the server runs a **mock PayP
 
 PayPal's own "Webhook simulator" events can't be verified by the verify API (PayPal says so), so use a real sandbox payment.
 
-**Status of the sandbox path:** the request and response shapes follow PayPal's documentation and are unit-tested with recorded-shape fakes. A run against the live sandbox needs the owner's credentials and has not been done in this commit.
+**Status of the sandbox path:** passed end to end on 12 Nov 2026 using a UK Business sandbox seller and a Personal sandbox buyer. Order ZC-11 for GBP 28 was captured, its PAYMENT.CAPTURE.COMPLETED webhook passed verification, the order became Paid, and the robot sent the buyer a confirmation. See [SANDBOX-RESULT.md](SANDBOX-RESULT.md).
 
 ## What this project is built from
 
@@ -94,7 +94,7 @@ Sales Desk (github.com/Okorodavid/sales-desk, MIT) was built on 27 Oct to 4 Nov 
 
 ## Limits, said plainly
 
-- The real sandbox hasn't been run end to end yet (see above). The mock proves the shop's side.
+- One actual sandbox payment has passed end to end (see SANDBOX-RESULT.md). Offline regression tests continue to use the mock.
 - PayPal's docs show the PayPal order id on the capture and `invoice_id` in the capture example. They don't confirm that `custom_id` appears in the webhook body, so the shop matches by the PayPal order id it stored, and only cross-checks `custom_id` when it is present.
 - Only the PayPal wallet flow is built. Refunds, disputes and chargebacks are not. A refund event is ignored.
 - The shop prices in whole pounds so totals stay exact integers.
