@@ -30,7 +30,7 @@ A sales robot that sends PayPal links and only marks an order Paid when PayPal's
 Python, aiohttp, SQLite, PayPal REST APIs (Orders v2, Webhooks verify), AG Grid Community, Claude / Gemini / Muse Spark, Pillow.
 
 ## Try it
-Repo: (the owner adds the GitHub link after pushing). Run steps and the sandbox buyer login are in the README. Hosted demo: (a Render link, if the owner sets one up).
+Repo: https://github.com/Okorodavid/sales-desk-pay. Run steps and the sandbox buyer login are in the README. Hosted demo: (a Render link, if the owner sets one up).
 
 ## Sponsor prizes
 AG Grid: AG Grid Community is used for both grids (the order board and the PayPal events log). A project can win one main prize or honourable mention plus one sponsor prize; the other sponsors' tools (APIMatic, Bryntum, Channel3, Render) are not used, so don't tick them. Render is only a deploy option in `render.yaml`.
